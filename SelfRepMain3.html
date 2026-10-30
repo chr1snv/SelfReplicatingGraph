@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Autonomous Cellular Automaton (Relative Logic)</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #121212;
+            color: #e0e0e0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        #container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: #1e1e1e;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+        }
+        .canvases {
+            display: flex;
+            gap: 25px;
+            margin-bottom: 15px;
+        }
+        canvas {
+            background: #000;
+            border: 2px solid #333;
+            border-radius: 4px;
+            image-rendering: pixelated;
+        }
+        #targetCanvas { cursor: crosshair; }
+        #controls {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: center;
+            margin-top: 10px;
+        }
+        button, select {
+            background: #333;
+            color: #fff;
+            border: 1px solid #444;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+        button:hover, select:hover { background: #444; }
+        .label-text {
+            font-size: 13px;
+            color: #aaa;
+            text-align: center;
+            margin-top: 6px;
+            font-weight: 500;
+        }
+    </style>
+	</head>
+	<body>
+
+		<div id="container">
+			<h2 style="margin: 0 0 5px 0; font-weight: 400; color: #00ffcc;">Relative-State Decentralized Matter</h2>
+			<p style="margin: 0 0 20px 0; font-size: 13px; color: #888;">The sub-units now build outward using relative tracking logic vectors</p>
+			
+			<div class="canvases">
+				<div>
+				    <canvas id="targetCanvas" width="256" height="256" style="width:256px; height:256px;"></canvas>
+				    <div class="label-text">1. Draw Target Shape Blueprint</div>
+				</div>
+				<div>
+				    <canvas id="simCanvas" width="256" height="256" style="width:256px; height:256px;"></canvas>
+				    <div class="label-text">2. Active WebGL Simulation Loop</div>
+				</div>
+			</div>
+			
+			<div id="controls">
+				<button id="btnPlayPause">Pause</button>
+				<button id="btnStep">Step Frame</button>
+				<button id="btnClear">Clear Canvas</button>
+				<button id="btnCompile">Compile & Run</button>
+				<label for="fpsSelect" style="font-size:14px; margin-left: 10px;">Speed:</label>
+				<select id="fpsSelect">
+				    <option value="2">2 FPS</option>
+				    <option value="5">5 FPS</option>
+				    <option value="15" selected>15 FPS</option>
+				    <option value="30">30 FPS</option>
+				    <option value="60">60 FPS</option>
+				</select>
+			</div>
+		</div>
+		
+		
+		<!-- Include Three.js via CDN in your document head -->
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+		<div id="3d-visualizer" style="width: 256px; height: 256px; border: 2px solid #333; margin-top:10px; border-radius:4px;"></div>
+
+		<script>
+			// --- THREE.JS 3D NODE LINK GRAPH GENERATOR ---
+			const viewerEl = document.getElementById('3d-visualizer');
+			const scene = new THREE.Scene();
+			const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+			const renderer = new THREE.WebGLRenderer({ antialias: true });
+			renderer.setSize(256, 256);
+			viewerEl.appendChild(renderer.domElement);
+
+			camera.position.set(128, 128, 300);
+			camera.lookAt(128, 128, 0);
+
+			let currentMeshGroup = new THREE.Group();
+			scene.add(currentMeshGroup);
+
+			window.render3DGraph = function(nodes) {
+				// Clear old 3D node objects
+				while(currentMeshGroup.children.length > 0){ 
+					currentMeshGroup.remove(currentMeshGroup.children[0]); 
+				}
+
+				if (nodes.length < 2) return;
+
+				const points3D = [];
+				const matNode = new THREE.MeshBasicMaterial({ color: 0x00ffcc });
+				const geomNode = new THREE.SphereGeometry(2, 8, 8);
+
+				nodes.forEach((node, index) => {
+					// Map sequence index to Z-axis height to visualize topology winding direction
+					const zValue = index * 0.4; 
+					points3D.push(new THREE.Vector3(node.x, node.y, zValue));
+
+					const sphere = new THREE.Mesh(geomNode, matNode);
+					sphere.position.set(node.x, node.y, zValue);
+					currentMeshGroup.add(sphere);
+				});
+
+				// Draw the continuous link strings between nodes
+				const geomLine = new THREE.BufferGeometry().setFromPoints(points3D);
+				const matLine = new THREE.LineBasicMaterial({ color: 0xffaa00, linewidth: 2 });
+				const line = new THREE.Line(geomLine, matLine);
+				currentMeshGroup.add(line);
+			};
+
+			function animate3DView() {
+				requestAnimationFrame(animate3DView);
+				// Slow rotation loop to show Z-depth tracking offsets clearly
+				currentMeshGroup.rotation.y = Math.sin(Date.now() * 0.001) * 0.2;
+				renderer.render(scene, camera);
+			}
+			animate3DView();
+		</script>
+
+		<script>
+			// --- 1. EDITABLE DESIGN BLUEPRINT CANVAS ---
+			const targetCanvas = document.getElementById('targetCanvas');
+			const ctx = targetCanvas.getContext('2d', { willReadFrequently: true });
+			let isDrawing = false;
+
+			function initCanvasBlueprint() {
+				ctx.fillStyle = '#000000';
+				ctx.fillRect(0, 0, 256, 256);
+				
+				// Draw an asymmetric custom track profile
+				ctx.strokeStyle = '#ffffff';
+				ctx.lineWidth = 14;
+				ctx.beginPath();
+				ctx.moveTo(60, 60);
+				ctx.lineTo(200, 60);
+				ctx.lineTo(200, 180);
+				ctx.lineTo(60, 180);
+				ctx.closePath();
+				ctx.stroke();
+			}
+			initCanvasBlueprint();
+
+			targetCanvas.addEventListener('mousedown', () => isDrawing = true);
+			window.addEventListener('mouseup', () => { if(isDrawing) { isDrawing = false; compileDirectives(); } });
+			targetCanvas.addEventListener('mousemove', draw);
+
+			function draw(e) {
+				if (!isDrawing) return;
+				const rect = targetCanvas.getBoundingClientRect();
+				const x = (e.clientX - rect.left) * (256 / rect.width);
+				const y = (e.clientY - rect.top) * (256 / rect.height);
+				
+				ctx.fillStyle = '#ffffff';
+				ctx.beginPath();
+				ctx.arc(x, y, 8, 0, 2 * Math.PI);
+				ctx.fill();
+			}
+
+			// --- NEW DECENTRALIZED GRAPH COMPILER ---
+			const graphArray = new Float32Array(256 * 4); // Max 256 structural nodes. Format: [TurnRule, ReplicateCount, Reserved, Reserved]
+			let totalGraphNodes = 0;
+
+			function compileDirectives() {
+				const imgData = ctx.getImageData(0, 0, 256, 256);
+				const pixels = imgData.data;
+				
+				// 1. Find all active coordinates belonging to the shape outline
+				let points = [];
+				for (let y = 0; y < 256; y++) {
+					for (let x = 0; x < 256; x++) {
+						let idx = (y * 256 + x) * 4;
+						if (pixels[idx] > 127) {
+							points.push({x: x, y: 255 - y}); // Sync WebGL Y coordinates
+						}
+					}
+				}
+
+				// Reset Graph Buffers
+				graphArray.fill(0);
+				totalGraphNodes = 0;
+				if (points.length === 0) { updateDirectiveTexture(); return; }
+
+				// 2. Trace path step-by-step from an arbitrary starting point to extract structural connectivity
+				let currentPoint = points[0];
+				let visited = new Set();
+				let orderedNodes = [];
+
+				while (currentPoint && orderedNodes.length < 254) {
+					orderedNodes.push(currentPoint);
+					visited.add(`${currentPoint.x},${currentPoint.y}`);
+					
+					let nextPoint = null;
+					// Scan localized 8-way proximity radius for adjacent path segments
+					for (let dx = -3; dx <= 3; dx++) {
+						for (let dy = -3; dy <= 3; dy++) {
+							let check = points.find(p => p.x === currentPoint.x + dx && p.y === currentPoint.y + dy);
+							if (check && !visited.has(`${check.x},${check.y}`)) {
+								nextPoint = check;
+								break;
+							}
+						}
+						if (nextPoint) break;
+					}
+					currentPoint = nextPoint;
+				}
+
+				totalGraphNodes = orderedNodes.length;
+
+				// Convert global vector differences into local, cell-relative steering angles
+				for (let i = 0; i < totalGraphNodes; i++) {
+					let prev = orderedNodes[(i - 1 + totalGraphNodes) % totalGraphNodes];
+					let curr = orderedNodes[i];
+					let next = orderedNodes[(i + 1) % totalGraphNodes];
+
+					// Parent heading vector
+					let dx1 = curr.x - prev.x;
+					let dy1 = curr.y - prev.y;
+					// Intended next heading vector
+					let dx2 = next.x - curr.x;
+					let dy2 = next.y - curr.y;
+
+					// Calculate cross product to evaluate geometric deflection angles
+					let cross = dx1 * dy2 - dy1 * dx2;
+					let relativeSteer = 0.0; // 0.0 = Keep Straight Ahead
+
+					if (cross > 0.5)  { relativeSteer = 0.25; }  // Relative Turn Left command
+					if (cross < -0.5) { relativeSteer = -0.25; } // Relative Turn Right command
+
+					let arrayIdx = i * 4;
+					graphArray[arrayIdx + 0] = relativeSteer; // Store localized turn offset delta
+					graphArray[arrayIdx + 1] = i / 255.0; 
+				}
+
+				updateDirectiveTexture();
+				if (window.render3DGraph) { window.render3DGraph(orderedNodes); }
+			}
+
+			// Redefine texture dimensions to match the structural graph row length
+			function updateDirectiveTexture() {
+				gl.bindTexture(gl.TEXTURE_2D, directiveTexture);
+				// 256x1 texel row structure represents our linear connectivity network array
+				gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 256, 1, 0, gl.RGBA, gl.FLOAT, graphArray);
+			}
+
+
+			// --- 3. WEBGL ENGINE AND GRAPHICS PIPELINE ---
+			const canvas = document.getElementById('simCanvas');
+			const gl = canvas.getContext('webgl2');
+			if (!gl) { alert('WebGL 2 required.'); }
+			
+			// Vertex shader passes basic plane coordinates
+			const vsSource = `#version 300 es
+				in vec2 position;
+				void main() {
+					gl_Position = vec4(position, 0.0, 1.0);
+				}`;
+
+			const fsSource = `#version 300 es
+				precision highp float;
+				uniform sampler2D u_state_texture;
+				uniform sampler2D u_directive_texture; // Treated as 1D linear node graph: texture(u_directive_texture, vec2(NodeID, 0.5))
+				uniform vec2 u_resolution;
+				uniform float u_rand_seed;
+				uniform int u_mode; 
+
+				out vec4 fragColor;
+
+				float rand(vec2 co) {
+					return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453 + u_rand_seed);
+				}
+
+				void main() {
+					vec2 uv = gl_FragCoord.xy / u_resolution;
+					vec2 texel = 1.0 / u_resolution;
+
+					// MODE 1: COMPILER RESET & SEED SWARM INITIALIZATION
+					if (u_mode == 1) {
+						// Drop the master parent root cell directly onto the canvas slide center
+						if (int(gl_FragCoord.x) == 128 && int(gl_FragCoord.y) == 128) {
+							fragColor = vec4(1.0, 0.0, 0.0, 0.25); // [Active Type=1.0, Node ID Graph Pointer=0.0, Food=0.0, Face Direction=EAST]
+							return;
+						}
+						
+						// Seed resources everywhere across ambient space
+						if (rand(uv) > 0.85) {
+							fragColor = vec4(0.5, 0.0, 0.0, 0.0); // Scatter Raw Feedstock globally
+							return;
+						}
+						fragColor = vec4(0.0, 0.0, 0.0, 0.0);
+						return;
+					}
+
+					// MODE 0: DECENTRALIZED RELATIVE TOPOLOGY STEERING
+					vec4 current = texture(u_state_texture, uv);
+
+					vec4 n = texture(u_state_texture, uv + vec2(0.0, texel.y));
+					vec4 s = texture(u_state_texture, uv + vec2(0.0, -texel.y));
+					vec4 e = texture(u_state_texture, uv + vec2(texel.x, 0.0));
+					vec4 w = texture(u_state_texture, uv + vec2(-texel.x, 0.0));
+
+					if (current.r > 0.9) { // I AM AN ACTIVE STRUCTURAL SUB-UNIT
+						vec4 nextState = current;
+
+						// Harvest resources locally
+						if (current.b < 0.6) {
+							if (n.r > 0.4 && n.r < 0.6) nextState.b += 0.2;
+							else if (s.r > 0.4 && s.r < 0.6) nextState.b += 0.2;
+							else if (e.r > 0.4 && e.r < 0.6) nextState.b += 0.2;
+							else if (w.r > 0.4 && w.r < 0.6) nextState.b += 0.2;
+						}
+
+						// Query the relative turning instruction using our node index pointer
+						vec4 graphNode = texture(u_directive_texture, vec2(current.g, 0.5));
+						float graphTurnDirective = graphNode.r;
+
+						// FIXED: Shift vector relatively by adding the turn angle to our current direction
+						nextState.a = fract(current.a + graphTurnDirective);
+
+						fragColor = nextState;
+						return;
+					} 
+					else if (current.r > 0.4 && current.r < 0.6) { // I AM AN ENVIRONMENTAL RESOURCE BLOCK
+						if (n.r > 0.9 || s.r > 0.9 || e.r > 0.9 || w.r > 0.9) {
+							fragColor = vec4(0.0, 0.0, 0.0, 0.0); // Transformed into building element
+							return;
+						}
+						fragColor = current;
+						return;
+					} 
+					else { // I AM VACUUM EMPTY SPACE
+						// Check if adjacent neighbors are targeting this coordinate block for replication
+						// If they are, inherit their structural attributes and increment child Node ID position pointer
+						if (n.r > 0.9 && n.a == 0.5)  { fragColor = vec4(1.0, min(1.0, n.g + (1.0/255.0)), 0.0, n.a); return; }
+						if (s.r > 0.9 && s.a == 0.0)  { fragColor = vec4(1.0, min(1.0, s.g + (1.0/255.0)), 0.0, s.a); return; }
+						if (e.r > 0.9 && e.a == 0.75) { fragColor = vec4(1.0, min(1.0, e.g + (1.0/255.0)), 0.0, e.a); return; }
+						if (w.r > 0.9 && w.a == 0.25) { fragColor = vec4(1.0, min(1.0, w.g + (1.0/255.0)), 0.0, w.a); return; }
+						
+						fragColor = current;
+					}
+				}`;
+
+
+			// --- SHADER STRUCT AND COMPILATION PIPELINE ---
+			function createShader(gl, type, source) {
+				const s = gl.createShader(type); gl.shaderSource(s, source); gl.compileShader(s);
+				if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { console.error(gl.getShaderInfoLog(s)); return null; }
+				return s;
+			}
+			
+			const program = gl.createProgram();
+			gl.attachShader(program, createShader(gl, gl.VERTEX_SHADER, vsSource));
+			gl.attachShader(program, createShader(gl, gl.FRAGMENT_SHADER, fsSource));
+			gl.linkProgram(program);
+			
+			const posAttr = gl.getAttribLocation(program, "position");
+			const resUniform = gl.getUniformLocation(program, "u_resolution");
+			const seedUniform = gl.getUniformLocation(program, "u_rand_seed");
+			const modeUniform = gl.getUniformLocation(program, "u_mode");
+			const stateTexUniform = gl.getUniformLocation(program, "u_state_texture");
+			const dirTexUniform = gl.getUniformLocation(program, "u_directive_texture");
+			
+			const pBuffer = gl.createBuffer();
+			gl.bindBuffer(gl.ARRAY_BUFFER, pBuffer);
+			gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
+			const vao = gl.createVertexArray();
+			gl.bindVertexArray(vao); gl.enableVertexAttribArray(posAttr); gl.vertexAttribPointer(posAttr, 2, gl.FLOAT, false, 0, 0);
+			// Setup Dynamic State Textures (Ping-Pong arrays)
+			let textures = [], framebuffers = [];
+			for (let i = 0; i < 2; i++) {
+				const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
+				gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, canvas.width, canvas.height, 0, gl.RGBA, gl.FLOAT, null);
+				gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+				gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+				textures.push(tex);
+				const fb = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+				gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+				framebuffers.push(fb);
+			}
+			// Setup Dedicated Map Texture for Compiled Directives
+			const directiveTexture = gl.createTexture();
+			gl.bindTexture(gl.TEXTURE_2D, directiveTexture);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+			
+			let currentBufIdx = 0, isPlaying = true, maxFps = 15, lastFrameTime = 0;
+			function stepEngineSimulation(mode) {
+				gl.useProgram(program);
+				gl.bindVertexArray(vao);
+				gl.uniform2f(resUniform, canvas.width, canvas.height);
+				gl.uniform1f(seedUniform, Math.random());
+				gl.uniform1i(modeUniform, mode);
+				let nextBufIdx = 1 - currentBufIdx;
+				gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffers[nextBufIdx]);
+				// Clean execution binds prevent frame collision freezes
+				gl.activeTexture(gl.TEXTURE0);
+				gl.bindTexture(gl.TEXTURE_2D, textures[currentBufIdx]);
+				gl.uniform1i(stateTexUniform, 0);
+				gl.activeTexture(gl.TEXTURE1);
+				gl.bindTexture(gl.TEXTURE_2D, directiveTexture);
+				gl.uniform1i(dirTexUniform, 1);
+				gl.viewport(0, 0, canvas.width, canvas.height);
+				gl.drawArrays(gl.TRIANGLES, 0, 6);
+				gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+				gl.bindTexture(gl.TEXTURE_2D, textures[nextBufIdx]);
+				gl.drawArrays(gl.TRIANGLES, 0, 6);
+				currentBufIdx = nextBufIdx;
+			}
+			function tick(timestamp) {
+				requestAnimationFrame(tick);
+				if (!isPlaying) return;
+				const delta = timestamp - lastFrameTime;
+				const interval = 1000 / maxFps;
+				if (delta >= interval) {
+					lastFrameTime = timestamp - (delta % interval);
+					stepEngineSimulation(0);
+				}
+			}
+			// EVENT INITIALIZATION HOOKS
+			document.getElementById('btnPlayPause').addEventListener('click', (e) => {
+			isPlaying = !isPlaying; e.target.innerText = isPlaying ? "Pause" : "Play System";
+			});
+			document.getElementById('btnStep').addEventListener('click', () => {
+				isPlaying = false; document.getElementById('btnPlayPause').innerText = "Play System"; stepEngineSimulation(0);
+			});
+			document.getElementById('btnClear').addEventListener('click', () => {
+				ctx.fillStyle = '#000000'; ctx.fillRect(0, 0, 256, 256); compileDirectives();
+			});
+			document.getElementById('btnCompile').addEventListener('click', () => {
+				compileDirectives(); stepEngineSimulation(1);
+			});
+			document.getElementById('fpsSelect').addEventListener('change', (e) => maxFps = parseInt(e.target.value));
+			
+			// Start simulation
+			gl.getExtension('EXT_color_buffer_float');
+			compileDirectives();
+			stepEngineSimulation(1);
+			requestAnimationFrame(tick);
+
+		</script>
+		
+		
+		
+
+
+	</body>
+</html>
