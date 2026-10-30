@@ -201,78 +201,143 @@
 			let totalGraphNodes = 0;
 
 			function compileDirectives() {
-				const imgData = ctx.getImageData(0, 0, 256, 256);
-				const pixels = imgData.data;
-				
-				// 1. Find all active coordinates belonging to the shape outline
-				let points = [];
-				for (let y = 0; y < 256; y++) {
-					for (let x = 0; x < 256; x++) {
-						let idx = (y * 256 + x) * 4;
-						if (pixels[idx] > 127) {
-							points.push({x: x, y: 255 - y}); // Sync WebGL Y coordinates
-						}
-					}
-				}
+			  const imgData = ctx.getImageData(0, 0, 256, 256);
+			  const pixels = imgData.data;
+			  const w = 256, h = 256;
 
-				// Reset Graph Buffers
+			  // 1) Binary occupancy mask
+			  const occupied = new Uint8Array(w * h);
+			  for (let y = 0; y < h; y++) {
+				for (let x = 0; x < w; x++) {
+				  const idx = (y * w + x) * 4;
+				  occupied[y * w + x] = pixels[idx] > 127 ? 1 : 0;
+				}
+			  }
+
+			  // 2) Find a seed pixel inside the shape
+			  let seed = null;
+			  outer:
+			  for (let y = 1; y < h - 1; y++) {
+				for (let x = 1; x < w - 1; x++) {
+				  const i = y * w + x;
+				  if (occupied[i]) {
+					// cheap test: check if this pixel has a white neighbor in all directions
+					const neighbors = [
+					  occupied[i - 1], occupied[i + 1],
+					  occupied[i - w], occupied[i + w],
+					  occupied[i - w - 1], occupied[i - w + 1],
+					  occupied[i + w - 1], occupied[i + w + 1]
+					];
+					if (neighbors.some(v => v)) {
+					  seed = { x, y };
+					  break outer;
+					}
+				  }
+				}
+			  }
+
+			  if (!seed) {
 				graphArray.fill(0);
 				totalGraphNodes = 0;
-				if (points.length === 0) { updateDirectiveTexture(); return; }
-
-				// 2. Trace path step-by-step from an arbitrary starting point to extract structural connectivity
-				let currentPoint = points[0];
-				let visited = new Set();
-				let orderedNodes = [];
-
-				while (currentPoint && orderedNodes.length < 254) {
-					orderedNodes.push(currentPoint);
-					visited.add(`${currentPoint.x},${currentPoint.y}`);
-					
-					let nextPoint = null;
-					// Scan localized 8-way proximity radius for adjacent path segments
-					for (let dx = -3; dx <= 3; dx++) {
-						for (let dy = -3; dy <= 3; dy++) {
-							let check = points.find(p => p.x === currentPoint.x + dx && p.y === currentPoint.y + dy);
-							if (check && !visited.has(`${check.x},${check.y}`)) {
-								nextPoint = check;
-								break;
-							}
-						}
-						if (nextPoint) break;
-					}
-					currentPoint = nextPoint;
-				}
-
-				totalGraphNodes = orderedNodes.length;
-
-				// Convert global vector differences into local, cell-relative steering angles
-				for (let i = 0; i < totalGraphNodes; i++) {
-					let prev = orderedNodes[(i - 1 + totalGraphNodes) % totalGraphNodes];
-					let curr = orderedNodes[i];
-					let next = orderedNodes[(i + 1) % totalGraphNodes];
-
-					// Parent heading vector
-					let dx1 = curr.x - prev.x;
-					let dy1 = curr.y - prev.y;
-					// Intended next heading vector
-					let dx2 = next.x - curr.x;
-					let dy2 = next.y - curr.y;
-
-					// Calculate cross product to evaluate geometric deflection angles
-					let cross = dx1 * dy2 - dy1 * dx2;
-					let relativeSteer = 0.0; // 0.0 = Keep Straight Ahead
-
-					if (cross > 0.5)  { relativeSteer = 0.25; }  // Relative Turn Left command
-					if (cross < -0.5) { relativeSteer = -0.25; } // Relative Turn Right command
-
-					let arrayIdx = i * 4;
-					graphArray[arrayIdx + 0] = relativeSteer; // Store localized turn offset delta
-					graphArray[arrayIdx + 1] = i / 255.0; 
-				}
-
 				updateDirectiveTexture();
-				if (window.render3DGraph) { window.render3DGraph(orderedNodes); }
+				return;
+			  }
+
+			  // 3) Flood-fill the connected component from the seed
+			  const stack = [seed];
+			  const visited = new Uint8Array(w * h);
+			  const filled = [];
+			  visited[seed.y * w + seed.x] = 1;
+
+			  while (stack.length) {
+				const p = stack.pop();
+				filled.push({ x: p.x, y: p.y });
+
+				for (let dy = -1; dy <= 1; dy++) {
+				  for (let dx = -1; dx <= 1; dx++) {
+					if (dx === 0 && dy === 0) continue;
+
+					const nx = p.x + dx;
+					const ny = p.y + dy;
+					if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+
+					const idx = ny * w + nx;
+					if (!occupied[idx] || visited[idx]) continue;
+
+					visited[idx] = 1;
+					stack.push({ x: nx, y: ny });
+				  }
+				}
+			  }
+
+			  // 4) Downsample the filled region to a graph of candidate nodes
+			  //    Use a coarse lattice so each node has a clear local neighborhood.
+			  const sampled = [];
+			  for (const p of filled) {
+				// sample every 2-3 pixels to avoid giant density
+				if ((p.x + p.y) % 3 === 0) {
+				  sampled.push(p);
+				}
+			  }
+
+			  // 5) Compute local turn directives from neighborhood orientation
+			  graphArray.fill(0);
+			  totalGraphNodes = Math.min(sampled.length, 256);
+
+			  for (let i = 0; i < totalGraphNodes; i++) {
+				const p = sampled[i];
+				let xSum = 0;
+				let ySum = 0;
+				let count = 0;
+
+				// local centroid of neighbors in the same connected component
+				for (let dy = -1; dy <= 1; dy++) {
+				  for (let dx = -1; dx <= 1; dx++) {
+					if (dx === 0 && dy === 0) continue;
+
+					const nx = p.x + dx;
+					const ny = p.y + dy;
+					if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+
+					const idx = ny * w + nx;
+					if (occupied[idx]) {
+					  xSum += nx;
+					  ySum += ny;
+					  count++;
+					}
+				  }
+				}
+
+				// If we have neighbors, estimate local heading
+				let turn = 0;
+				if (count > 0) {
+				  const cx = xSum / count;
+				  const cy = ySum / count;
+
+				  // local vector from center to neighbor centroid
+				  const dx = cx - p.x;
+				  const dy = cy - p.y;
+
+				  // map vector to a turn directive
+				  // within your existing system, keep the directive in [-0.25, 0.25]
+				  if (Math.abs(dx) > 0.0001 || Math.abs(dy) > 0.0001) {
+					const angle = Math.atan2(dy, dx);
+					// Convert angle to a small steering directive
+					turn = Math.max(-0.25, Math.min(0.25, angle / (Math.PI * 2)));
+				  }
+				}
+
+				const idx = i * 4;
+				graphArray[idx + 0] = turn;
+				graphArray[idx + 1] = i / 255.0;
+				graphArray[idx + 2] = 0;
+				graphArray[idx + 3] = 0;
+			  }
+
+			  updateDirectiveTexture();
+			  if (window.render3DGraph) {
+				window.render3DGraph(sampled.slice(0, 256));
+			  }
 			}
 
 			// Redefine texture dimensions to match the structural graph row length
@@ -317,12 +382,12 @@
 					if (u_mode == 1) {
 						// Drop the master parent root cell directly onto the canvas slide center
 						if (int(gl_FragCoord.x) == 128 && int(gl_FragCoord.y) == 128) {
-							fragColor = vec4(1.0, 0.0, 0.0, 0.25); // [Active Type=1.0, Node ID Graph Pointer=0.0, Food=0.0, Face Direction=EAST]
+							fragColor = vec4(1.0, 1.0, 0.0, 0.25); // [Active Type=1.0, Node ID Graph Pointer=0.0, Food=0.0, Face Direction=EAST]
 							return;
 						}
 						
 						// Seed resources everywhere across ambient space
-						if (rand(uv) > 0.85) {
+						if (rand(uv) > 0.05) {
 							fragColor = vec4(0.5, 0.0, 0.0, 0.0); // Scatter Raw Feedstock globally
 							return;
 						}
