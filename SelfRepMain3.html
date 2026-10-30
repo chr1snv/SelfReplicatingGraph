@@ -338,10 +338,10 @@
 					vec4 e = texture(u_state_texture, uv + vec2(texel.x, 0.0));
 					vec4 w = texture(u_state_texture, uv + vec2(-texel.x, 0.0));
 
-					if (current.r > 0.9) { // I AM AN ACTIVE STRUCTURAL SUB-UNIT
+					if (current.r > 0.9) { // I AM AN ACTIVE CELL
 						vec4 nextState = current;
 
-						// Harvest resources locally
+						// Pull resources from adjacent raw feedstock pixels
 						if (current.b < 0.6) {
 							if (n.r > 0.4 && n.r < 0.6) nextState.b += 0.2;
 							else if (s.r > 0.4 && s.r < 0.6) nextState.b += 0.2;
@@ -349,16 +349,18 @@
 							else if (w.r > 0.4 && w.r < 0.6) nextState.b += 0.2;
 						}
 
-						// Query the relative turning instruction using our node index pointer
 						vec4 graphNode = texture(u_directive_texture, vec2(current.g, 0.5));
 						float graphTurnDirective = graphNode.r;
 
-						// FIXED: Shift vector relatively by adding the turn angle to our current direction
-						nextState.a = fract(current.a + graphTurnDirective);
+						// Turn relatively and consume food resources to execute the structural update step
+						if (graphTurnDirective != 0.0 && current.b >= 0.2) {
+							nextState.a = fract(current.a + graphTurnDirective);
+							nextState.b -= 0.2; // Spend resource token to clear out feedback loops
+						}
 
 						fragColor = nextState;
 						return;
-					} 
+					}
 					else if (current.r > 0.4 && current.r < 0.6) { // I AM AN ENVIRONMENTAL RESOURCE BLOCK
 						if (n.r > 0.9 || s.r > 0.9 || e.r > 0.9 || w.r > 0.9) {
 							fragColor = vec4(0.0, 0.0, 0.0, 0.0); // Transformed into building element
@@ -368,12 +370,12 @@
 						return;
 					} 
 					else { // I AM VACUUM EMPTY SPACE
-						// Check if adjacent neighbors are targeting this coordinate block for replication
-						// If they are, inherit their structural attributes and increment child Node ID position pointer
-						if (n.r > 0.9 && n.a == 0.5)  { fragColor = vec4(1.0, min(1.0, n.g + (1.0/255.0)), 0.0, n.a); return; }
-						if (s.r > 0.9 && s.a == 0.0)  { fragColor = vec4(1.0, min(1.0, s.g + (1.0/255.0)), 0.0, s.a); return; }
-						if (e.r > 0.9 && e.a == 0.75) { fragColor = vec4(1.0, min(1.0, e.g + (1.0/255.0)), 0.0, e.a); return; }
-						if (w.r > 0.9 && w.a == 0.25) { fragColor = vec4(1.0, min(1.0, w.g + (1.0/255.0)), 0.0, w.a); return; }
+						// Strict Direction Vector Lock: Only materialize a cell if an active neighbor 
+						// has enough food/resources (b >= 0.2) AND its local orientation vector faces this space directly
+						if (n.r > 0.9 && n.a == 0.5 && n.b >= 0.2)  { fragColor = vec4(1.0, min(1.0, n.g + (1.0/255.0)), 0.0, n.a); return; }
+						if (s.r > 0.9 && s.a == 0.0 && s.b >= 0.2)  { fragColor = vec4(1.0, min(1.0, s.g + (1.0/255.0)), 0.0, s.a); return; }
+						if (e.r > 0.9 && e.a == 0.75 && e.b >= 0.2) { fragColor = vec4(1.0, min(1.0, e.g + (1.0/255.0)), 0.0, e.a); return; return; }
+						if (w.r > 0.9 && w.a == 0.25 && w.b >= 0.2) { fragColor = vec4(1.0, min(1.0, w.g + (1.0/255.0)), 0.0, w.a); return; return; }
 						
 						fragColor = current;
 					}
