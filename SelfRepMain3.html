@@ -318,12 +318,12 @@
 				  const dx = cx - p.x;
 				  const dy = cy - p.y;
 
-				  // map vector to a turn directive
-				  // within your existing system, keep the directive in [-0.25, 0.25]
+				  // map vector to an angle in [0,1), then apply a small steering offset
+				  // so the sim can follow the direction changes continuously rather than
+				  // relying on exact discrete direction equality.
 				  if (Math.abs(dx) > 0.0001 || Math.abs(dy) > 0.0001) {
-					const angle = Math.atan2(dy, dx);
-					// Convert angle to a small steering directive
-					turn = Math.max(-0.25, Math.min(0.25, angle / (Math.PI * 2)));
+					turn = (Math.atan2(dy, dx) / (Math.PI * 2.0));
+					turn = turn < 0 ? turn + 1.0 : turn;
 				  }
 				}
 
@@ -374,6 +374,11 @@
 					return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453 + u_rand_seed);
 				}
 
+				float dirDistance(float dirValue, float target) {
+					float wrapped = abs(fract(dirValue - target + 1.0));
+					return min(abs(dirValue - target), abs(wrapped));
+				}
+
 				void main() {
 					vec2 uv = gl_FragCoord.xy / u_resolution;
 					vec2 texel = 1.0 / u_resolution;
@@ -417,10 +422,12 @@
 						vec4 graphNode = texture(u_directive_texture, vec2(current.g, 0.5));
 						float graphTurnDirective = graphNode.r;
 
-						// Turn relatively and consume food resources to execute the structural update step
+						// Turn relatively and consume food resources to execute the structural update step.
+						// The key change is to use a wrapped direction value and allow small tolerance
+						// instead of exact discrete equality checks when cells attempt to branch.
 						if (graphTurnDirective != 0.0 && current.b >= 0.2) {
 							nextState.a = fract(current.a + graphTurnDirective);
-							nextState.b -= 0.2; // Spend resource token to clear out feedback loops
+							nextState.b -= 0.1;
 						}
 
 						fragColor = nextState;
@@ -435,12 +442,13 @@
 						return;
 					} 
 					else { // I AM VACUUM EMPTY SPACE
-						// Strict Direction Vector Lock: Only materialize a cell if an active neighbor 
-						// has enough food/resources (b >= 0.2) AND its local orientation vector faces this space directly
-						if (n.r > 0.9 && n.a == 0.5 && n.b >= 0.2)  { fragColor = vec4(1.0, min(1.0, n.g + (1.0/255.0)), 0.0, n.a); return; }
-						if (s.r > 0.9 && s.a == 0.0 && s.b >= 0.2)  { fragColor = vec4(1.0, min(1.0, s.g + (1.0/255.0)), 0.0, s.a); return; }
-						if (e.r > 0.9 && e.a == 0.75 && e.b >= 0.2) { fragColor = vec4(1.0, min(1.0, e.g + (1.0/255.0)), 0.0, e.a); return; return; }
-						if (w.r > 0.9 && w.a == 0.25 && w.b >= 0.2) { fragColor = vec4(1.0, min(1.0, w.g + (1.0/255.0)), 0.0, w.a); return; return; }
+						// Allow the active neighbor to grow into this empty pixel if its facing direction
+						// is close to that cardinal direction. We compare using wrapped distances instead of
+						// exact equality so directional adjustments propagate smoothly.
+						if (n.r > 0.9 && n.b >= 0.2 && dirDistance(n.a, 0.5) < 0.125)  { fragColor = vec4(1.0, min(1.0, n.g + (1.0/255.0)), 0.0, n.a); return; }
+						if (s.r > 0.9 && s.b >= 0.2 && dirDistance(s.a, 0.0) < 0.125)  { fragColor = vec4(1.0, min(1.0, s.g + (1.0/255.0)), 0.0, s.a); return; }
+						if (e.r > 0.9 && e.b >= 0.2 && dirDistance(e.a, 0.75) < 0.125) { fragColor = vec4(1.0, min(1.0, e.g + (1.0/255.0)), 0.0, e.a); return; }
+						if (w.r > 0.9 && w.b >= 0.2 && dirDistance(w.a, 0.25) < 0.125) { fragColor = vec4(1.0, min(1.0, w.g + (1.0/255.0)), 0.0, w.a); return; }
 						
 						fragColor = current;
 					}
