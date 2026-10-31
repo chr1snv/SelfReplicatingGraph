@@ -494,7 +494,7 @@ ctx.fill();
 
 				if (u_mode == 1) { //initilization (place food and seed cell)
 					if (int(gl_FragCoord.x) == 128 && int(gl_FragCoord.y) == 128) { //place seed cell
-						fragColor = vec4(1.0, 1.0, 0.0, 0.25);
+						fragColor = vec4(1.0, 1.0, 0.1, 0.25);
 					}
 					else if (rand(uv) > 0.05) { //place food (energy and materials)
 						fragColor = vec4(0.5, 0.0, 0.0, 0.0);
@@ -539,8 +539,10 @@ ctx.fill();
 					if (newCurrentDirectiveID != 0.0) { //write results of gather to current state_texture pixel
 						fragColor.g = 1.0; // Wake up cell state to alive
 						fragColor.b = newCurrentDirectiveID;
+						return;
 					}
 				}
+				fragColor = current;
 			}`;
 
 		function createShader(gl, type, source) {
