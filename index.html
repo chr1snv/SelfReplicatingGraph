@@ -1,594 +1,642 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Autonomous Cellular Automaton (Relative Logic)</title>
-    <style>
-        body {
-            margin: 0;
-            background-color: #121212;
-            color: #e0e0e0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            overflow: hidden;
-        }
-        #container {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            background: #1e1e1e;
-            padding: 25px;
-            border-radius: 12px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-        }
-        .canvases {
-            display: flex;
-            gap: 25px;
-            margin-bottom: 15px;
-        }
-        canvas {
-            background: #000;
-            border: 2px solid #333;
-            border-radius: 4px;
-            image-rendering: pixelated;
-        }
-        #targetCanvas { cursor: crosshair; }
-        #controls {
-            display: flex;
-            gap: 12px;
-            align-items: center;
-            flex-wrap: wrap;
-            justify-content: center;
-            margin-top: 10px;
-        }
-        button, select {
-            background: #333;
-            color: #fff;
-            border: 1px solid #444;
-            padding: 8px 16px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: 500;
-            transition: background 0.2s;
-        }
-        button:hover, select:hover { background: #444; }
-        .label-text {
-            font-size: 13px;
-            color: #aaa;
-            text-align: center;
-            margin-top: 6px;
-            font-weight: 500;
-        }
-    </style>
+	<meta charset="UTF-8">
+	<title>Autonomous Cellular Automaton (Relative Logic)</title>
+	<style>
+		body {
+		    margin: 0;
+		    background-color: #121212;
+		    color: #e0e0e0;
+		    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+		    display: flex;
+		    flex-direction: column;
+		    align-items: center;
+		    justify-content: center;
+		    min-height: 100vh;
+		    overflow: scroll;
+		}
+		.container {
+		    display: flex;
+		    flex-direction: column;
+		    align-items: center;
+		    background: #1e1e1e;
+		    padding: 25px;
+		    border: 1px solid black;
+		    border-radius: 12px;
+		    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+		}
+		.canvases {
+		    display: flex;
+		    gap: 25px;
+		    margin-bottom: 15px;
+		}
+		canvas {
+		    background: #000;
+		    border: 2px solid #333;
+		    border-radius: 4px;
+		    image-rendering: pixelated;
+		}
+		#targetCanvas { cursor: crosshair; }
+		#controls {
+		    display: flex;
+		    gap: 12px;
+		    align-items: center;
+		    flex-wrap: wrap;
+		    justify-content: center;
+		    margin-top: 10px;
+		}
+		button, select {
+		    background: #333;
+		    color: #fff;
+		    border: 1px solid #444;
+		    padding: 8px 16px;
+		    border-radius: 6px;
+		    cursor: pointer;
+		    font-weight: 500;
+		    transition: background 0.2s;
+		}
+		button:hover, select:hover { background: #444; }
+		.label-text {
+		    font-size: 13px;
+		    color: #aaa;
+		    text-align: center;
+		    margin-top: 6px;
+		    font-weight: 500;
+		}
+	</style>
 </head>
 <body>
 
-    <div id="container">
-        <h2 style="margin: 0 0 5px 0; font-weight: 400; color: #00ffcc;">Relative-State Decentralized Matter</h2>
-        <p style="margin: 0 0 20px 0; font-size: 13px; color: #888;">The sub-units now build outward using relative tracking logic vectors</p>
-
-        <div class="canvases">
-            <div>
-                <canvas id="targetCanvas" width="256" height="256" style="width:256px; height:256px;"></canvas>
-                <div class="label-text">1. Draw Target Shape Blueprint</div>
-            </div>
-            <div>
-                <canvas id="simCanvas" width="256" height="256" style="width:256px; height:256px;"></canvas>
-                <div class="label-text">2. Active WebGL Simulation Loop</div>
-            </div>
-        </div>
-
-        <div id="controls">
-            <button id="btnPlayPause">Pause</button>
-            <button id="btnStep">Step Frame</button>
-            <button id="btnClear">Clear Canvas</button>
-            <button id="btnCompile">Compile & Run</button>
-            <label for="fpsSelect" style="font-size:14px; margin-left: 10px;">Speed:</label>
-            <select id="fpsSelect">
-                <option value="2">2 FPS</option>
-                <option value="5">5 FPS</option>
-                <option value="15" selected>15 FPS</option>
-                <option value="30">30 FPS</option>
-                <option value="60">60 FPS</option>
-            </select>
-        </div>
-    </div>
-
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <div id="3d-visualizer" style="width: 256px; height: 256px; border: 2px solid #333; margin-top:10px; border-radius:4px;"></div>
-
-    <script>
-        const viewerEl = document.getElementById('3d-visualizer');
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(256, 256);
-        viewerEl.appendChild(renderer.domElement);
-
-        camera.position.set(128, 128, 300);
-        camera.lookAt(128, 128, 0);
-
-        let currentMeshGroup = new THREE.Group();
-        scene.add(currentMeshGroup);
-
-        window.render3DGraph = function(nodes) {
-            while (currentMeshGroup.children.length > 0) {
-                currentMeshGroup.remove(currentMeshGroup.children[0]);
-            }
-
-            if (!Array.isArray(nodes) || nodes.length < 3) return;
-
-            const nodeMaterial = new THREE.MeshBasicMaterial({ color: 0x00ffcc });
-            const nodeGeometry = new THREE.SphereGeometry(2, 8, 8);
-            const edgePositions = [];
-
-            nodes.forEach((node, index) => {
-                const zValue = (index % 12) * 0.4;
-                const pos = new THREE.Vector3(node.x, node.y, zValue);
-
-                const sphere = new THREE.Mesh(nodeGeometry, nodeMaterial);
-                sphere.position.copy(pos);
-                currentMeshGroup.add(sphere);
-
-                const neighbors = Array.isArray(node.neighbors) ? node.neighbors : [];
-                neighbors.forEach((neighborIndex) => {
-                    if (neighborIndex > index) {
-                        const neighbor = nodes[neighborIndex];
-                        if (!neighbor) return;
-                        const nz = (neighborIndex % 12) * 0.4;
-                        edgePositions.push(
-                            pos.x, pos.y, pos.z,
-                            neighbor.x, neighbor.y, nz
-                        );
-                    }
-                });
-            });
-
-            if (edgePositions.length > 0) {
-                const edgeGeometry = new THREE.BufferGeometry();
-                edgeGeometry.setAttribute('position', new THREE.Float32BufferAttribute(edgePositions, 3));
-                const edgeMaterial = new THREE.LineBasicMaterial({ color: 0xffaa00, linewidth: 2 });
-                currentMeshGroup.add(new THREE.LineSegments(edgeGeometry, edgeMaterial));
-            }
-        };
-
-        function animate3DView() {
-            requestAnimationFrame(animate3DView);
-            currentMeshGroup.rotation.y = Math.sin(Date.now() * 0.001) * 0.2;
-            renderer.render(scene, camera);
-        }
-        animate3DView();
-    </script>
-
-    <script>
-        const targetCanvas = document.getElementById('targetCanvas');
-        const ctx = targetCanvas.getContext('2d', { willReadFrequently: true });
-        let isDrawing = false;
-
-        function initCanvasBlueprint() {
-            ctx.fillStyle = '#000000';
-            ctx.fillRect(0, 0, 256, 256);
-
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 14;
-            ctx.beginPath();
-            ctx.moveTo(60, 60);
-            ctx.lineTo(200, 60);
-            ctx.lineTo(200, 180);
-            ctx.lineTo(60, 180);
-            ctx.closePath();
-            ctx.stroke();
-        }
-        initCanvasBlueprint();
-
-        targetCanvas.addEventListener('mousedown', () => isDrawing = true);
-        window.addEventListener('mouseup', () => { if (isDrawing) { isDrawing = false; compileDirectives(); } });
-        targetCanvas.addEventListener('mousemove', draw);
-
-        function draw(e) {
-            if (!isDrawing) return;
-            const rect = targetCanvas.getBoundingClientRect();
-            const x = (e.clientX - rect.left) * (256 / rect.width);
-            const y = (e.clientY - rect.top) * (256 / rect.height);
-
-            ctx.fillStyle = '#ffffff';
-            ctx.beginPath();
-            ctx.arc(x, y, 8, 0, 2 * Math.PI);
-            ctx.fill();
-        }
-
-        function buildMeshFromImage(occupied, w, h) {
-            const step = 5;
-            const samples = [];
-
-            for (let y = step; y < h - step; y += step) {
-                for (let x = step; x < w - step; x += step) {
-                    const idx = y * w + x;
-                    if (!occupied[idx]) continue;
-
-                    const neighborhood = [
-                        occupied[idx - 1], occupied[idx + 1],
-                        occupied[idx - w], occupied[idx + w],
-                        occupied[idx - w - 1], occupied[idx - w + 1],
-                        occupied[idx + w - 1], occupied[idx + w + 1]
-                    ];
-
-                    if (!neighborhood.some(Boolean)) continue;
-                    samples.push({ x, y });
-                }
-            }
-
-            if (samples.length === 0) {
-                return [];
-            }
-
-            const nodes = samples.map((sample) => ({ x: sample.x, y: sample.y, neighbors: [] }));
-            const maxRadius = step * 5;
-            const maxRadiusSq = maxRadius * maxRadius;
-
-            for (let i = 0; i < nodes.length; i++) {
-                const node = nodes[i];
-                const candidates = [];
-
-                for (let j = 0; j < nodes.length; j++) {
-                    if (i === j) continue;
-
-                    const other = nodes[j];
-                    const dx = other.x - node.x;
-                    const dy = other.y - node.y;
-                    const distSq = dx * dx + dy * dy;
-
-                    if (distSq < maxRadiusSq) {
-                        candidates.push({ index: j, distSq });
-                    }
-                }
-
-                if (candidates.length === 0) continue;
-
-                candidates.sort((a, b) => a.distSq - b.distSq);
-                const chosen = [];
-                for (const candidate of candidates) {
-                    if (chosen.length >= 3) break;
-                    const idx = candidate.index;
-                    const other = nodes[idx];
-                    const dx = other.x - node.x;
-                    const dy = other.y - node.y;
-                    const onSameAxis = Math.abs(dx) < 0.01 || Math.abs(dy) < 0.01;
-                    if (onSameAxis && chosen.length === 0) {
-                        chosen.push(idx);
-                    } else if (!onSameAxis) {
-                        chosen.push(idx);
-                    }
-                }
-
-                if (chosen.length < 3) {
-                    for (const candidate of candidates) {
-                        if (chosen.includes(candidate.index)) continue;
-                        chosen.push(candidate.index);
-                        if (chosen.length >= 3) break;
-                    }
-                }
-
-                node.neighbors = chosen.slice(0, 3);
-            }
-
-            return nodes;
-        }
-
-        const graphArray = new Float32Array(256 * 4);
-        let totalGraphNodes = 0;
-
-        function compileDirectives() {
-            const imgData = ctx.getImageData(0, 0, 256, 256);
-            const pixels = imgData.data;
-            const w = 256, h = 256;
-
-            const occupied = new Uint8Array(w * h);
-            for (let y = 0; y < h; y++) {
-                for (let x = 0; x < w; x++) {
-                    const idx = (y * w + x) * 4;
-                    occupied[y * w + x] = pixels[idx] > 127 ? 1 : 0;
-                }
-            }
-
-            let seed = null;
-            outer:
-            for (let y = 1; y < h - 1; y++) {
-                for (let x = 1; x < w - 1; x++) {
-                    const i = y * w + x;
-                    if (occupied[i]) {
-                        const neighbors = [
-                            occupied[i - 1], occupied[i + 1],
-                            occupied[i - w], occupied[i + w],
-                            occupied[i - w - 1], occupied[i - w + 1],
-                            occupied[i + w - 1], occupied[i + w + 1]
-                        ];
-                        if (neighbors.some(Boolean)) {
-                            seed = { x, y };
-                            break outer;
-                        }
-                    }
-                }
-            }
-
-            if (!seed) {
-                graphArray.fill(0);
-                totalGraphNodes = 0;
-                updateDirectiveTexture();
-                return;
-            }
-
-            const stack = [seed];
-            const visited = new Uint8Array(w * h);
-            const filled = [];
-            visited[seed.y * w + seed.x] = 1;
-
-            while (stack.length) {
-                const p = stack.pop();
-                filled.push({ x: p.x, y: p.y });
-
-                for (let dy = -1; dy <= 1; dy++) {
-                    for (let dx = -1; dx <= 1; dx++) {
-                        if (dx === 0 && dy === 0) continue;
-
-                        const nx = p.x + dx;
-                        const ny = p.y + dy;
-                        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-
-                        const idx = ny * w + nx;
-                        if (!occupied[idx] || visited[idx]) continue;
-                        visited[idx] = 1;
-                        stack.push({ x: nx, y: ny });
-                    }
-                }
-            }
-
-            const meshNodes = buildMeshFromImage(occupied, w, h);
-            const graphNodes = meshNodes.slice(0, 256);
-
-            graphArray.fill(0);
-            totalGraphNodes = Math.min(graphNodes.length, 256);
-
-            for (let i = 0; i < totalGraphNodes; i++) {
-                const p = graphNodes[i];
-                let xSum = 0;
-                let ySum = 0;
-                let count = 0;
-
-                const neighbors = Array.isArray(p.neighbors) ? p.neighbors : [];
-                for (const neighborIndex of neighbors) {
-                    const neighbor = graphNodes[neighborIndex];
-                    if (!neighbor) continue;
-                    xSum += neighbor.x;
-                    ySum += neighbor.y;
-                    count++;
-                }
-
-                let turn = 0;
-                if (count > 0) {
-                    const cx = xSum / count;
-                    const cy = ySum / count;
-                    const dx = cx - p.x;
-                    const dy = cy - p.y;
-
-                    if (Math.abs(dx) > 0.0001 || Math.abs(dy) > 0.0001) {
-                        turn = (Math.atan2(dy, dx) / (Math.PI * 2.0));
-                        turn = turn < 0 ? turn + 1.0 : turn;
-                    }
-                }
-
-                const idx = i * 4;
-                graphArray[idx + 0] = turn;
-                graphArray[idx + 1] = i / 255.0;
-                graphArray[idx + 2] = Math.min(neighbors.length, 3) / 3.0;
-                graphArray[idx + 3] = 0;
-            }
-
-            updateDirectiveTexture();
-            if (window.render3DGraph) {
-                window.render3DGraph(graphNodes.map((node) => ({
-                    x: node.x,
-                    y: node.y,
-                    neighbors: node.neighbors
-                })));
-            }
-        }
-
-        function updateDirectiveTexture() {
-            gl.bindTexture(gl.TEXTURE_2D, directiveTexture);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 256, 1, 0, gl.RGBA, gl.FLOAT, graphArray);
-        }
-
-        const canvas = document.getElementById('simCanvas');
-        const gl = canvas.getContext('webgl2');
-        if (!gl) { alert('WebGL 2 required.'); }
-
-        const vsSource = `#version 300 es
-            in vec2 position;
-            void main() {
-                gl_Position = vec4(position, 0.0, 1.0);
-            }`;
-
-        const fsSource = `#version 300 es
-            precision highp float;
-            uniform sampler2D u_state_texture;
-            uniform sampler2D u_directive_texture;
-            uniform vec2 u_resolution;
-            uniform float u_rand_seed;
-            uniform int u_mode;
-
-            out vec4 fragColor;
-
-            float rand(vec2 co) {
-                return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453 + u_rand_seed);
-            }
-
-            float dirDistance(float dirValue, float target) {
-                float wrapped = abs(fract(dirValue - target + 1.0));
-                return min(abs(dirValue - target), abs(wrapped));
-            }
-
-            void main() {
-                vec2 uv = gl_FragCoord.xy / u_resolution;
-                vec2 texel = 1.0 / u_resolution;
-
-                if (u_mode == 1) {
-                    if (int(gl_FragCoord.x) == 128 && int(gl_FragCoord.y) == 128) {
-                        fragColor = vec4(1.0, 1.0, 0.0, 0.25);
-                        return;
-                    }
-
-                    if (rand(uv) > 0.05) {
-                        fragColor = vec4(0.5, 0.0, 0.0, 0.0);
-                        return;
-                    }
-                    fragColor = vec4(0.0, 0.0, 0.0, 0.0);
-                    return;
-                }
-
-                vec4 current = texture(u_state_texture, uv);
-                vec4 n = texture(u_state_texture, uv + vec2(0.0, texel.y));
-                vec4 s = texture(u_state_texture, uv + vec2(0.0, -texel.y));
-                vec4 e = texture(u_state_texture, uv + vec2(texel.x, 0.0));
-                vec4 w = texture(u_state_texture, uv + vec2(-texel.x, 0.0));
-
-                if (current.r > 0.9) {
-                    vec4 nextState = current;
-
-                    if (current.b < 0.6) {
-                        if (n.r > 0.4 && n.r < 0.6) nextState.b += 0.2;
-                        else if (s.r > 0.4 && s.r < 0.6) nextState.b += 0.2;
-                        else if (e.r > 0.4 && e.r < 0.6) nextState.b += 0.2;
-                        else if (w.r > 0.4 && w.r < 0.6) nextState.b += 0.2;
-                    }
-
-                    vec4 graphNode = texture(u_directive_texture, vec2(current.g, 0.5));
-                    float graphTurnDirective = graphNode.r;
-
-                    if (graphTurnDirective != 0.0 && current.b >= 0.2) {
-                        nextState.a = fract(current.a + graphTurnDirective);
-                        nextState.b -= 0.1;
-                    }
-
-                    fragColor = nextState;
-                    return;
-                }
-                else if (current.r > 0.4 && current.r < 0.6) {
-                    if (n.r > 0.9 || s.r > 0.9 || e.r > 0.9 || w.r > 0.9) {
-                        fragColor = vec4(0.0, 0.0, 0.0, 0.0);
-                        return;
-                    }
-                    fragColor = current;
-                    return;
-                }
-                else {
-                    if (n.r > 0.9 && n.b >= 0.2 && dirDistance(n.a, 0.5) < 0.125)  { fragColor = vec4(1.0, min(1.0, n.g + (1.0/255.0)), 0.0, n.a); return; }
-                    if (s.r > 0.9 && s.b >= 0.2 && dirDistance(s.a, 0.0) < 0.125)  { fragColor = vec4(1.0, min(1.0, s.g + (1.0/255.0)), 0.0, s.a); return; }
-                    if (e.r > 0.9 && e.b >= 0.2 && dirDistance(e.a, 0.75) < 0.125) { fragColor = vec4(1.0, min(1.0, e.g + (1.0/255.0)), 0.0, e.a); return; }
-                    if (w.r > 0.9 && w.b >= 0.2 && dirDistance(w.a, 0.25) < 0.125) { fragColor = vec4(1.0, min(1.0, w.g + (1.0/255.0)), 0.0, w.a); return; }
-
-                    fragColor = current;
-                }
-            }`;
-
-        function createShader(gl, type, source) {
-            const s = gl.createShader(type); gl.shaderSource(s, source); gl.compileShader(s);
-            if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { console.error(gl.getShaderInfoLog(s)); return null; }
-            return s;
-        }
-
-        const program = gl.createProgram();
-        gl.attachShader(program, createShader(gl, gl.VERTEX_SHADER, vsSource));
-        gl.attachShader(program, createShader(gl, gl.FRAGMENT_SHADER, fsSource));
-        gl.linkProgram(program);
-
-        const posAttr = gl.getAttribLocation(program, "position");
-        const resUniform = gl.getUniformLocation(program, "u_resolution");
-        const seedUniform = gl.getUniformLocation(program, "u_rand_seed");
-        const modeUniform = gl.getUniformLocation(program, "u_mode");
-        const stateTexUniform = gl.getUniformLocation(program, "u_state_texture");
-        const dirTexUniform = gl.getUniformLocation(program, "u_directive_texture");
-
-        const pBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, pBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
-        const vao = gl.createVertexArray();
-        gl.bindVertexArray(vao); gl.enableVertexAttribArray(posAttr); gl.vertexAttribPointer(posAttr, 2, gl.FLOAT, false, 0, 0);
-
-        let textures = [], framebuffers = [];
-        for (let i = 0; i < 2; i++) {
-            const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, canvas.width, canvas.height, 0, gl.RGBA, gl.FLOAT, null);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-            textures.push(tex);
-            const fb = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
-            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
-            framebuffers.push(fb);
-        }
-
-        const directiveTexture = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D, directiveTexture);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-
-        let currentBufIdx = 0, isPlaying = true, maxFps = 15, lastFrameTime = 0;
-
-        function stepEngineSimulation(mode) {
-            gl.useProgram(program);
-            gl.bindVertexArray(vao);
-            gl.uniform2f(resUniform, canvas.width, canvas.height);
-            gl.uniform1f(seedUniform, Math.random());
-            gl.uniform1i(modeUniform, mode);
-            let nextBufIdx = 1 - currentBufIdx;
-            gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffers[nextBufIdx]);
-            gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D, textures[currentBufIdx]);
-            gl.uniform1i(stateTexUniform, 0);
-            gl.activeTexture(gl.TEXTURE1);
-            gl.bindTexture(gl.TEXTURE_2D, directiveTexture);
-            gl.uniform1i(dirTexUniform, 1);
-            gl.viewport(0, 0, canvas.width, canvas.height);
-            gl.drawArrays(gl.TRIANGLES, 0, 6);
-            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-            gl.bindTexture(gl.TEXTURE_2D, textures[nextBufIdx]);
-            gl.drawArrays(gl.TRIANGLES, 0, 6);
-            currentBufIdx = nextBufIdx;
-        }
-
-        function tick(timestamp) {
-            requestAnimationFrame(tick);
-            if (!isPlaying) return;
-            const delta = timestamp - lastFrameTime;
-            const interval = 1000 / maxFps;
-            if (delta >= interval) {
-                lastFrameTime = timestamp - (delta % interval);
-                stepEngineSimulation(0);
-            }
-        }
-
-        document.getElementById('btnPlayPause').addEventListener('click', (e) => {
-            isPlaying = !isPlaying; e.target.innerText = isPlaying ? "Pause" : "Play System";
-        });
-        document.getElementById('btnStep').addEventListener('click', () => {
-            isPlaying = false; document.getElementById('btnPlayPause').innerText = "Play System"; stepEngineSimulation(0);
-        });
-        document.getElementById('btnClear').addEventListener('click', () => {
-            ctx.fillStyle = '#000000'; ctx.fillRect(0, 0, 256, 256); compileDirectives();
-        });
-        document.getElementById('btnCompile').addEventListener('click', () => {
-            compileDirectives(); stepEngineSimulation(1);
-        });
-        document.getElementById('fpsSelect').addEventListener('change', (e) => maxFps = parseInt(e.target.value));
-
-        gl.getExtension('EXT_color_buffer_float');
-        compileDirectives();
-        stepEngineSimulation(1);
-        requestAnimationFrame(tick);
-    </script>
+	<div class="container">
+		<h2 style="margin: 0 0 5px 0; font-weight: 400; color: #00ffcc;">Decentralized Co-operative Matter</h2>
+		<p style="margin: 0 0 20px 0; font-size: 13px; color: #888;">The sub-units now build outward using relative tracking logic vectors</p>
+
+		<div class="canvases">
+			<div>
+				<h3>Directive Image</h3>
+				<canvas id="targetCanvas" width="256" height="256" style="width:256px; height:256px;"></canvas>
+				<div class="label-text">1. Draw Target Shape Blueprint</div>
+			</div>
+			<div>
+				<h3>Simulation</h3>
+				<canvas id="simCanvas" width="256" height="256" style="width:256px; height:256px;"></canvas>
+				<div class="label-text">2. Active WebGL Simulation Loop</div>
+			</div>
+		</div>
+
+		<div id="controls">
+			<button id="btnPlayPause">Pause</button>
+			<button id="btnStep">Step Frame</button>
+			<button id="btnClear">Clear Canvas</button>
+			<button id="btnCompile">Compile & Run</button>
+			<label for="fpsSelect" style="font-size:14px; margin-left: 10px;">Speed:</label>
+			<select id="fpsSelect">
+				<option value="2">2 FPS</option>
+				<option value="5">5 FPS</option>
+				<option value="15" selected>15 FPS</option>
+				<option value="30">30 FPS</option>
+				<option value="60">60 FPS</option>
+			</select>
+		</div>
+		<div class="status">
+        Legend: <span style="color:#222;">■</span> Empty | <span style="color:#770000;">■</span> Raw Material | <span style="color:#0000cc;">■</span> Directive Index
+	    </div>
+	</div>
+
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+	<div class="container">
+		<h3>Directive Graph</h3>
+		<div id="3d-visualizer" style="width: 256px; height: 256px; border: 2px solid #333; margin-top:10px; border-radius:4px;"></div>
+		<button id="resetViewBtn">Reset View</button>
+	</div>
+
+	<script>
+		const viewerEl = document.getElementById('3d-visualizer');
+		const scene = new THREE.Scene();
+		const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+		const renderer = new THREE.WebGLRenderer({ antialias: true });
+		renderer.setSize(256, 256);
+		viewerEl.appendChild(renderer.domElement);
+
+		camera.position.set(128, 128, 300);
+		camera.lookAt(128, 128, 0);
+
+		let currentMeshGroup = new THREE.Group();
+		scene.add(currentMeshGroup);
+
+		window.render3DGraph = function(nodes) {
+			while (currentMeshGroup.children.length > 0) {
+				currentMeshGroup.remove(currentMeshGroup.children[0]);
+			}
+
+			if (!Array.isArray(nodes) || nodes.length < 3) return;
+
+			// Reuse the geometry to keep it performant
+			const nodeGeometry = new THREE.SphereGeometry(2, 8, 8);
+			const edgePositions = [];
+
+			nodes.forEach((node, index) => {
+				let zDepth = 2;
+				const zValue = (index % 12) * (zDepth/2) - (zDepth/2);
+				const pos = new THREE.Vector3(node.x, node.y, zValue);
+
+				// 1. Generate a unique color based on the node's index
+				// This spreads colors evenly around the color wheel (0.0 to 1.0)
+				const hue = index / nodes.length; 
+				const uniqueColor = new THREE.Color().setHSL(hue, 1.0, 0.5);
+
+				// 2. Instantiate a separate material for this specific node
+				const uniqueNodeMaterial = new THREE.MeshBasicMaterial({ color: uniqueColor });
+
+				const sphere = new THREE.Mesh(nodeGeometry, uniqueNodeMaterial);
+				sphere.position.copy(pos);
+				currentMeshGroup.add(sphere);
+
+				const neighbors = Array.isArray(node.neighbors) ? node.neighbors : [];
+				neighbors.forEach((neighborIndex) => {
+					if (neighborIndex > index) {
+						const neighbor = nodes[neighborIndex];
+						if (!neighbor) return;
+						const nz = (neighborIndex % 12) * 0.4;
+						edgePositions.push(
+							pos.x, pos.y, pos.z,
+							neighbor.x, neighbor.y, nz
+						);
+					}
+				});
+			});
+
+			if (edgePositions.length > 0) {
+				const edgeGeometry = new THREE.BufferGeometry();
+				edgeGeometry.setAttribute('position', new THREE.Float32BufferAttribute(edgePositions, 3));
+				const edgeMaterial = new THREE.LineBasicMaterial({ color: 0xffaa00, linewidth: 2 });
+				currentMeshGroup.add(new THREE.LineSegments(edgeGeometry, edgeMaterial));
+			}
+		};
+
+
+
+		// 1. Initialize OrbitControls with your custom inputs
+		const controls = new THREE.OrbitControls(camera, renderer.domElement);
+
+		// Enable damping for smooth transitions
+		controls.enableDamping = true;
+		controls.dampingFactor = 0.05;
+
+		// Configure Mouse Actions
+		// Left click = PAN, Shift + Left click = TILT (Rotate)
+		controls.mouseButtons = {
+			LEFT: THREE.MOUSE.PAN,
+			MIDDLE: THREE.MOUSE.DOLLY,
+			RIGHT: THREE.MOUSE.ROTATE
+		};
+
+		// Configure Touch Actions for Mobile
+		// 1 Finger = PAN, 2 Fingers = TILT (Rotate) + ZOOM (Pinch)
+		controls.touches = {
+			ONE: THREE.TOUCH.PAN,
+			TWO: THREE.TOUCH.DOLLY_ROTATE
+		};
+
+		// Save the initial camera position for the reset function
+		const initialCameraPos = camera.position.clone();
+		const initialTarget = controls.target.clone();
+
+		// 2. HTML Button Reset Control
+		const resetButton = document.getElementById('resetViewBtn'); // Ensure this ID matches your HTML button
+		resetButton.addEventListener('click', () => {
+			camera.position.copy(initialCameraPos);
+			controls.target.copy(initialTarget);
+			controls.update();
+		});
+
+		// 3. Keyboard Zoom Controls (+ / - keys)
+		window.addEventListener('keydown', (event) => {
+			const zoomSpeed = 2.0; // Adjust zoom sensitivity here
+			
+			if (event.key === '+' || event.key === '=') {
+				// Zoom In
+				camera.position.z -= zoomSpeed;
+			} else if (event.key === '-' || event.key === '_') {
+				// Zoom Out
+				camera.position.z += zoomSpeed;
+			}
+			controls.update();
+		});
+
+		// 4. Updated Animation Loop
+		function animate3DView() {
+			requestAnimationFrame(animate3DView);
+			
+			// Your existing idle mesh rotation
+			currentMeshGroup.rotation.y = Math.sin(Date.now() * 0.001) * 0.2;
+			
+			// Required to smoothly update OrbitControls damping
+			controls.update(); 
+			
+			renderer.render(scene, camera);
+		}
+
+		animate3DView();
+	</script>
+
+	<script>
+		const targetCanvas = document.getElementById('targetCanvas');
+		const ctx = targetCanvas.getContext('2d', { willReadFrequently: true });
+		let isDrawing = false;
+
+		function initCanvasBlueprint() {
+			ctx.fillStyle = '#000000';
+			ctx.fillRect(0, 0, 256, 256);
+
+			ctx.strokeStyle = '#ffffff';
+			ctx.lineWidth = 14;
+			ctx.beginPath();
+			ctx.moveTo(60, 60);
+			ctx.lineTo(200, 60);
+			ctx.lineTo(200, 180);
+			ctx.lineTo(60, 180);
+			ctx.closePath();
+			ctx.stroke();
+		}
+		initCanvasBlueprint();
+
+		targetCanvas.addEventListener('mousedown', () => isDrawing = true);
+		window.addEventListener('mouseup', () => { if (isDrawing) { isDrawing = false; compileDirectives(); } });
+		targetCanvas.addEventListener('mousemove', draw);
+
+		function draw(e) {
+			if (!isDrawing) return;
+			const rect = targetCanvas.getBoundingClientRect();
+			const x = (e.clientX - rect.left) * (256 / rect.width);
+			const y = (e.clientY - rect.top) * (256 / rect.height);
+
+			ctx.fillStyle = '#ffffff';
+			ctx.beginPath();
+			ctx.arc(x, y, 8, 0, 2 * Math.PI);
+ctx.fill();
+		}
+
+
+		/**
+		 * Builds a 2D mesh grid layout mapping exactly up to 4 orthogonal neighbors per cell.
+		 * 
+		 * @param {Uint8Array} occupied - Flat binary map array (1 = filled, 0 = empty).
+		 * @param {number} w - Width of the image canvas.
+		 * @param {number} h - Height of the image canvas.
+		 * @returns {Array<Object>} Array of mesh nodes {x, y, neighbors: [N, S, E, W]}.
+		 */
+		function buildMeshFromImage(occupied, w, h) {
+			const step = 8;
+			const nodes = [];
+			
+			// Fast 2D lookup map matching the sample points grid dimensions
+			const gridLookup = {};
+
+			// 1. Sparse Sampling & Node Index Registry Creation
+			for (let y = step; y < h - step; y += step) {
+				for (let x = step; x < w - step; x += step) {
+				    if (occupied[y * w + x]) {
+				        // Node indices must be 1-based because 0 represents an empty slot
+				        const nodeIndex = nodes.length + 1; 
+				        
+				        nodes.push({ x, y, neighbors: [0, 0, 0, 0] });
+				        gridLookup[`${x},${y}`] = nodeIndex;
+				    }
+				}
+			}
+
+			// 2. Immediate O(1) Orthogonal Neighborhood Matching
+			for (let i = 0; i < nodes.length; i++) {
+				const node = nodes[i];
+
+				// Read direct 1-step grid coordinate positions natively
+				const nIdx = gridLookup[`${node.x},${node.y - step}`] || 0; // North
+				const sIdx = gridLookup[`${node.x},${node.y + step}`] || 0; // South
+				const eIdx = gridLookup[`${node.x + step},${node.y}`] || 0; // East
+				const wIdx = gridLookup[`${node.x - step},${node.y}`] || 0; // West
+
+				node.neighbors = [nIdx, sIdx, eIdx, wIdx];
+			}
+
+			return nodes;
+		}
+
+		// Each graph node takes exactly 1 pixel (4 consecutive Floats: R, G, B, A)
+		const graphArray = new Float32Array(256 * 4);
+		let totalGraphNodes = 0;
+
+		function compileDirectives() {
+			const imgData = ctx.getImageData(0, 0, 256, 256);
+			const pixels = imgData.data;
+			const w = 256, h = 256;
+
+			const occupied = new Uint8Array(w * h);
+			for (let y = 0; y < h; y++) {
+				for (let x = 0; x < w; x++) {
+					const idx = (y * w + x) * 4;
+					occupied[y * w + x] = pixels[idx] > 127 ? 1 : 0;
+				}
+			}
+
+			let seed = null;
+			outer:
+			for (let y = 1; y < h - 1; y++) {
+				for (let x = 1; x < w - 1; x++) {
+					const i = y * w + x;
+					if (occupied[i]) {
+						const neighbors = [
+						    occupied[i - 1], occupied[i + 1],
+						    occupied[i - w], occupied[i + w],
+						    occupied[i - w - 1], occupied[i - w + 1],
+						    occupied[i + w - 1], occupied[i + w + 1]
+						];
+						if (neighbors.some(Boolean)) {
+						    seed = { x, y };
+						    break outer;
+						}
+					}
+				}
+			}
+
+			if (!seed) {
+				graphArray.fill(0);
+				totalGraphNodes = 0;
+				updateDirectiveTexture([]);
+				return;
+			}
+
+			const stack = [seed];
+			const visited = new Uint8Array(w * h);
+			const filled = [];
+			visited[seed.y * w + seed.x] = 1;
+
+			while (stack.length) {
+				const p = stack.pop();
+				filled.push({ x: p.x, y: p.y });
+
+				for (let dy = -1; dy <= 1; dy++) {
+					for (let dx = -1; dx <= 1; dx++) {
+						if (dx === 0 && dy === 0) continue;
+
+						const nx = p.x + dx;
+						const ny = p.y + dy;
+						if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+
+						const idx = ny * w + nx;
+						if (!occupied[idx] || visited[idx]) continue;
+						visited[idx] = 1;
+						stack.push({ x: nx, y: ny });
+					}
+				}
+			}
+
+			const meshNodes = buildMeshFromImage(occupied, w, h);
+
+			updateDirectiveTexture(meshNodes);
+			if (window.render3DGraph) {
+				window.render3DGraph(meshNodes.map((node) => ({
+					x: node.x,
+					y: node.y,
+					neighbors: node.neighbors
+				})));
+			}
+		}
+
+
+		function updateDirectiveTexture(nodes) {
+			graphArray.fill(0.0); // Clear state
+			const totalNodes = Math.min(nodes.length, 256);
+
+			for (let i = 0; i < totalNodes; i++) {
+				const { neighbors } = nodes[i];
+				const idx = i * 4;
+
+				// Pack the 4 neighbor indices directly across the 4 color channels.
+				// We normalize by dividing by 255.0 so it fits nicely into the texture.
+				graphArray[idx + 0] = neighbors[0] / 255.0; // Red channel   = North Index
+				graphArray[idx + 1] = neighbors[1] / 255.0; // Green channel = South Index
+				graphArray[idx + 2] = neighbors[2] / 255.0; // Blue channel  = East Index
+				graphArray[idx + 3] = neighbors[3] / 255.0; // Alpha channel = West Index
+				
+				// 1. Pack Coordinates Normalized (0.0 to 1.0) for easy shader math
+				//	graphArray[idx + 0] = node.x / 255.0; // Red channel: X coordinate 
+				//	graphArray[idx + 1] = node.y / 255.0; // Green channel: Y coordinate
+
+				//	// 2. Structural metadata for neighbor tracking logic loops
+				//	graphArray[idx + 2] = node.neighbors.length / 3.0; // Blue: Neighbor saturation fraction
+				//	graphArray[idx + 3] = i / 255.0;                   // Alpha: Absolute Node UID Index
+			}
+
+			gl.bindTexture(gl.TEXTURE_2D, directiveTexture);
+			gl.texImage2D(
+				gl.TEXTURE_2D, 
+				0, 
+				gl.RGBA32F,             // Internal GPU format (high precision 32-bit floats)
+				256,                    // Width: 256 structural node slots allocation
+				1,                      // Height: 1 pixel tall data layout strip
+				0, 
+				gl.RGBA,                // Format composition 
+				gl.FLOAT,               // Data transmission payload type
+				graphArray
+			);
+		}
+
+
+		const canvas = document.getElementById('simCanvas');
+		const gl = canvas.getContext('webgl2');
+		if (!gl) { alert('WebGL 2 required.'); }
+
+		const vsSource = `#version 300 es
+			in vec2 position;
+			void main() {
+				gl_Position = vec4(position, 0.0, 1.0);
+			}`;
+
+
+		//red is if current cell is food  (>=0.5)
+		//green is if a cell is alive
+		//blue is the index of the cell in the directive graph
+		const fsSource = `#version 300 es
+			precision highp float;
+			uniform sampler2D u_state_texture;
+			uniform sampler2D u_directive_texture;
+			uniform vec2 u_resolution;
+			uniform float u_rand_seed;
+			uniform int u_mode;
+
+			out vec4 fragColor;
+
+			float rand(vec2 co) {
+				return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453 + u_rand_seed);
+			}
+
+			float dirDistance(float dirValue, float target) {
+				float wrapped = abs(fract(dirValue - target + 1.0));
+				return min(abs(dirValue - target), abs(wrapped));
+			}
+			
+			int revNeighbor(int i){
+				switch(i){
+				case 0: return 1;
+				case 1: return 0;
+				case 2: return 3;
+				case 3: return 2;
+				//default: return 0;
+				}
+			}
+
+			void main() {
+				vec2 uv = gl_FragCoord.xy / u_resolution; //coordinates of pixel
+				vec2 texel = 1.0 / u_resolution; //distance of 1 pixel
+
+				if (u_mode == 1) { //initilization (place food and seed cell)
+					if (int(gl_FragCoord.x) == 128 && int(gl_FragCoord.y) == 128) { //place seed cell
+						fragColor = vec4(1.0, 1.0, 0.0, 0.25);
+					}
+					else if (rand(uv) > 0.05) { //place food (energy and materials)
+						fragColor = vec4(0.5, 0.0, 0.0, 0.0);
+					}
+					else{ //else make empty
+						fragColor = vec4(0.0, 0.0, 0.0, 0.0);
+					}
+					return;
+				}
+
+				//read world contents and neighbors at a pixel
+				vec4 current = texture(u_state_texture, uv);
+				vec4 neighbors[4];
+				neighbors[0] = texture(u_state_texture, uv + vec2(0.0, texel.y));
+				neighbors[1] = texture(u_state_texture, uv + vec2(0.0, -texel.y));
+				neighbors[2] = texture(u_state_texture, uv + vec2(texel.x, 0.0));
+				neighbors[3] = texture(u_state_texture, uv + vec2(-texel.x, 0.0));
+				int revNeighbors[4] = int[](1,0,3,2);
+
+				// --- Gather cell instantiation Logic (can't scatter (write to adjacent pixels) in pixel shader) ---
+				float newCurrentDirectiveID = 0.0;
+
+				// only check if adjacent cell should replicate to here if is inactive/empty slot ready to receive a cell state.
+				if (current.g < 0.5) {
+
+					//vec2 cellDirectiveTexCoord = vec2(cell_index, 0.5);
+					//vec4 graphNode = texture(u_directive_texture, cellDirectiveTexCoord);
+
+					for( int i = 0; i < 4; ++i ){ //check n s e w neighbors
+						vec4 n = neighbors[i];
+						//Is the neighbor alive, and does it desire a new node in the current location? (Gather step)
+						if ( n.g > 0.5 ) {
+							float neighborDirectiveIndex = n.b;
+							vec2 neighborDirectiveTexCoord = vec2(neighborDirectiveIndex, 0.5);
+							vec4 posibParent = texture(u_directive_texture, neighborDirectiveTexCoord);
+							float posibCurrentID = posibParent[revNeighbor(i)];
+							if ( posibCurrentID != 0.0) {
+								newCurrentDirectiveID = posibCurrentID;
+							}
+						}
+					}
+					if (newCurrentDirectiveID != 0.0) { //write results of gather to current state_texture pixel
+						fragColor.g = 1.0; // Wake up cell state to alive
+						fragColor.b = newCurrentDirectiveID;
+					}
+				}
+			}`;
+
+		function createShader(gl, type, source) {
+			const s = gl.createShader(type); gl.shaderSource(s, source); gl.compileShader(s);
+			if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { console.error(gl.getShaderInfoLog(s)); return null; }
+			return s;
+		}
+
+		const program = gl.createProgram();
+		gl.attachShader(program, createShader(gl, gl.VERTEX_SHADER, vsSource));
+		gl.attachShader(program, createShader(gl, gl.FRAGMENT_SHADER, fsSource));
+		gl.linkProgram(program);
+
+		const posAttr = gl.getAttribLocation(program, "position");
+		const resUniform = gl.getUniformLocation(program, "u_resolution");
+		const seedUniform = gl.getUniformLocation(program, "u_rand_seed");
+		const modeUniform = gl.getUniformLocation(program, "u_mode");
+		const stateTexUniform = gl.getUniformLocation(program, "u_state_texture");
+		const dirTexUniform = gl.getUniformLocation(program, "u_directive_texture");
+
+		const pBuffer = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, pBuffer);
+		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
+		const vao = gl.createVertexArray();
+		gl.bindVertexArray(vao); gl.enableVertexAttribArray(posAttr); gl.vertexAttribPointer(posAttr, 2, gl.FLOAT, false, 0, 0);
+
+		let textures = [], framebuffers = [];
+		for (let i = 0; i < 2; i++) {
+			const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
+			gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, canvas.width, canvas.height, 0, gl.RGBA, gl.FLOAT, null);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+			textures.push(tex);
+			const fb = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+			gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+			framebuffers.push(fb);
+		}
+
+		const directiveTexture = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D, directiveTexture);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+
+		let currentBufIdx = 0, isPlaying = true, maxFps = 15, lastFrameTime = 0;
+
+		function stepEngineSimulation(mode) {
+			gl.useProgram(program);
+			gl.bindVertexArray(vao);
+			gl.uniform2f(resUniform, canvas.width, canvas.height);
+			gl.uniform1f(seedUniform, Math.random());
+			gl.uniform1i(modeUniform, mode);
+			let nextBufIdx = 1 - currentBufIdx;
+			gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffers[nextBufIdx]);
+			gl.activeTexture(gl.TEXTURE0);
+			gl.bindTexture(gl.TEXTURE_2D, textures[currentBufIdx]);
+			gl.uniform1i(stateTexUniform, 0);
+			gl.activeTexture(gl.TEXTURE1);
+			gl.bindTexture(gl.TEXTURE_2D, directiveTexture);
+			gl.uniform1i(dirTexUniform, 1);
+			gl.viewport(0, 0, canvas.width, canvas.height);
+			gl.drawArrays(gl.TRIANGLES, 0, 6);
+			gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+			gl.bindTexture(gl.TEXTURE_2D, textures[nextBufIdx]);
+			gl.drawArrays(gl.TRIANGLES, 0, 6);
+			currentBufIdx = nextBufIdx;
+		}
+
+		function tick(timestamp) {
+			requestAnimationFrame(tick);
+			if (!isPlaying) return;
+			const delta = timestamp - lastFrameTime;
+			const interval = 1000 / maxFps;
+			if (delta >= interval) {
+				lastFrameTime = timestamp - (delta % interval);
+				stepEngineSimulation(0);
+			}
+		}
+
+		document.getElementById('btnPlayPause').addEventListener('click', (e) => {
+			isPlaying = !isPlaying; e.target.innerText = isPlaying ? "Pause" : "Play System";
+		});
+		document.getElementById('btnStep').addEventListener('click', () => {
+			isPlaying = false; document.getElementById('btnPlayPause').innerText = "Play System"; stepEngineSimulation(0);
+		});
+		document.getElementById('btnClear').addEventListener('click', () => {
+			ctx.fillStyle = '#000000'; ctx.fillRect(0, 0, 256, 256); compileDirectives();
+		});
+		document.getElementById('btnCompile').addEventListener('click', () => {
+			compileDirectives(); stepEngineSimulation(1);
+		});
+		document.getElementById('fpsSelect').addEventListener('change', (e) => maxFps = parseInt(e.target.value));
+
+		gl.getExtension('EXT_color_buffer_float');
+		compileDirectives();
+		stepEngineSimulation(1);
+		requestAnimationFrame(tick);
+	</script>
 </body>
 </html>
