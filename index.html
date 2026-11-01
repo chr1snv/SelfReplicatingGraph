@@ -495,7 +495,7 @@ ctx.fill();
 						if ( n.g > 0.5 ) {
 							int neighborDirectiveIndex = int(round(n.b * 255.0) );
 							if( neighborDirectiveIndex > 0 ){
-								ivec2 neighborDirectiveTexCoord = ivec2(neighborDirectiveIndex, 0.0);
+								ivec2 neighborDirectiveTexCoord = ivec2(neighborDirectiveIndex-1, 0.0);
 								vec4 posibParent = texelFetch(u_directive_texture, neighborDirectiveTexCoord, 0);
 								int posibCurrentID = int(round(posibParent[revNeighbor(i)]* 255.0) );
 								if ( ( posibCurrentID > 1 ) && (posibCurrentID != currentID) ) {  //is bigger than first, and is new
@@ -504,7 +504,7 @@ ctx.fill();
 							}
 						}
 					}
-					if ( newCurrentID > 1  && newCurrentID < 21 ) { //write results of gather to current state_texture pixel
+					if ( newCurrentID > 1  && newCurrentID < 255 ) { //write results of gather to current state_texture pixel
 						fragColor.g = 1.0; // create alive cell here (should prevent another check to replicate to here)
 						fragColor.b = float(newCurrentID) / 255.0;  //assign id in directive graph to cell
 						return;
