@@ -138,6 +138,7 @@
 			const edgePositions = [];
 
 			nodes.forEach((node, index) => {
+				//staircase depth of nodes for additional distinction in visualization
 				let zDepth = 2;
 				const zValue = (index % 12) * (zDepth/2) - (zDepth/2);
 				const pos = new THREE.Vector3(node.x, node.y, zValue);
@@ -156,8 +157,8 @@
 
 				const neighbors = Array.isArray(node.neighbors) ? node.neighbors : [];
 				neighbors.forEach((neighborIndex) => {
-					if (neighborIndex > index) {
-						const neighbor = nodes[neighborIndex];
+					if (neighborIndex > 0) {
+						const neighbor = nodes[neighborIndex-1];
 						if (!neighbor) return;
 						const nz = (neighborIndex % 12) * 0.4;
 						edgePositions.push(
@@ -279,6 +280,18 @@
 ctx.fill();
 		}
 
+		const NUM_NEIGHBORS = 4;
+		function xyI( x, y, width, stride){
+			return (y * width + x)*stride;
+		}
+		function nDToI( d, x, y, w, step, s ){
+			switch( d ){
+				case 0: return xyI( x     , y+step, w, s);
+				case 1: return xyI( x+0   , y-step, w, s);
+				case 2: return xyI( x+step, y+0,    w, s);
+				case 3: return xyI( x-step, y+0,    w, s);
+			}
+		}
 
 		/**
 		 * Builds a 2D mesh grid layout mapping exactly up to 4 orthogonal neighbors per cell.
@@ -288,37 +301,49 @@ ctx.fill();
 		 * @param {number} h - Height of the image canvas.
 		 * @returns {Array<Object>} Array of mesh nodes {x, y, neighbors: [N, S, E, W]}.
 		 */
-		function buildMeshFromImage(occupied, w, h) {
+		function buildMeshFromImage(imgData, w, h) {
+			const pixels = imgData.data;
+		
 			const step = 8;
 			const nodes = [];
 			
-			// Fast 2D lookup map matching the sample points grid dimensions
-			const gridLookup = {};
+			const stride = 4;
 
-			// 1. Sparse Sampling & Node Index Registry Creation
+			// 1. Sparse Sampling find nodes
 			for (let y = step; y < h - step; y += step) {
 				for (let x = step; x < w - step; x += step) {
-				    if (occupied[y * w + x]) {
-				        // Node indices must be 1-based because 0 represents an empty slot
-				        const nodeIndex = nodes.length + 1; 
-				        
-				        nodes.push({ x, y, neighbors: [0, 0, 0, 0] });
-				        gridLookup[`${x},${y}`] = nodeIndex;
-				    }
+					if (pixels[xyI( x,y,w, stride)]) {
+						// Node indices must be 1-based because 0 represents an empty slot
+						let neighbors = [0,0,0,0];
+						//check if neighbors are filled in
+						for( let j = 0; j < NUM_NEIGHBORS; ++j ){
+							neighbors[j] = pixels[nDToI(j, x, y, w, step, stride)] ? 1 : 0;
+						}
+
+						nodes.push( [ 0, x, y, neighbors ] ); //node 0: index, 1: x , 2: y, 3 array of 4 neighbors (1 or 0 at this point)
+					}
 				}
 			}
 
-			// 2. Immediate O(1) Orthogonal Neighborhood Matching
-			for (let i = 0; i < nodes.length; i++) {
-				const node = nodes[i];
-
-				// Read direct 1-step grid coordinate positions natively
-				const nIdx = gridLookup[`${node.x},${node.y - step}`] || 0; // North
-				const sIdx = gridLookup[`${node.x},${node.y + step}`] || 0; // South
-				const eIdx = gridLookup[`${node.x + step},${node.y}`] || 0; // East
-				const wIdx = gridLookup[`${node.x - step},${node.y}`] || 0; // West
-
-				node.neighbors = [nIdx, sIdx, eIdx, wIdx];
+			//assign node indicies
+			for( let i = 0; i < nodes.length; ++i ){
+				let nodeIdx = i + 1;
+				let node = nodes[i];
+				node[0] = nodeIdx;
+				pixels[ xyI(node[1], node[2], w, stride) ] = nodeIdx; //store it also in image for neighbor lookup
+			}
+			ctx.putImageData( imgData, 0, 0 ); //write indicies back to canvas for sampling visualization
+			
+			
+			//lookup neighbors and store their indicies (replace 1 neighbors with index from pixels)
+			for( let i = 0; i < nodes.length; ++i ){
+				let node = nodes[i];
+				for( let j = 0; j < NUM_NEIGHBORS; ++j ){ //for each neighbor lookup their index
+					if( node[3][j] ){ //overwrite the 1 with the neighbors index
+						let pixVal = pixels[nDToI( j, node[1], node[2], w, step, stride )];
+						node[3][j] = pixVal;
+					}
+				}
 			}
 
 			return nodes;
@@ -326,81 +351,19 @@ ctx.fill();
 
 		// Each graph node takes exactly 1 pixel (4 consecutive Floats: R, G, B, A)
 		const graphArray = new Float32Array(256 * 4);
-		let totalGraphNodes = 0;
 
 		function compileDirectives() {
 			const imgData = ctx.getImageData(0, 0, 256, 256);
-			const pixels = imgData.data;
 			const w = 256, h = 256;
 
-			const occupied = new Uint8Array(w * h);
-			for (let y = 0; y < h; y++) {
-				for (let x = 0; x < w; x++) {
-					const idx = (y * w + x) * 4;
-					occupied[y * w + x] = pixels[idx] > 127 ? 1 : 0;
-				}
-			}
-
-			let seed = null;
-			outer:
-			for (let y = 1; y < h - 1; y++) {
-				for (let x = 1; x < w - 1; x++) {
-					const i = y * w + x;
-					if (occupied[i]) {
-						const neighbors = [
-						    occupied[i - 1], occupied[i + 1],
-						    occupied[i - w], occupied[i + w],
-						    occupied[i - w - 1], occupied[i - w + 1],
-						    occupied[i + w - 1], occupied[i + w + 1]
-						];
-						if (neighbors.some(Boolean)) {
-						    seed = { x, y };
-						    break outer;
-						}
-					}
-				}
-			}
-
-			if (!seed) {
-				graphArray.fill(0);
-				totalGraphNodes = 0;
-				updateDirectiveTexture([]);
-				return;
-			}
-
-			const stack = [seed];
-			const visited = new Uint8Array(w * h);
-			const filled = [];
-			visited[seed.y * w + seed.x] = 1;
-
-			while (stack.length) {
-				const p = stack.pop();
-				filled.push({ x: p.x, y: p.y });
-
-				for (let dy = -1; dy <= 1; dy++) {
-					for (let dx = -1; dx <= 1; dx++) {
-						if (dx === 0 && dy === 0) continue;
-
-						const nx = p.x + dx;
-						const ny = p.y + dy;
-						if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-
-						const idx = ny * w + nx;
-						if (!occupied[idx] || visited[idx]) continue;
-						visited[idx] = 1;
-						stack.push({ x: nx, y: ny });
-					}
-				}
-			}
-
-			const meshNodes = buildMeshFromImage(occupied, w, h);
+			const meshNodes = buildMeshFromImage(imgData, w, h);
 
 			updateDirectiveTexture(meshNodes);
 			if (window.render3DGraph) {
 				window.render3DGraph(meshNodes.map((node) => ({
-					x: node.x,
-					y: node.y,
-					neighbors: node.neighbors
+					x: node[1],
+					y: node[2],
+					neighbors: node[3]
 				})));
 			}
 		}
@@ -411,7 +374,7 @@ ctx.fill();
 			const totalNodes = Math.min(nodes.length, 256);
 
 			for (let i = 0; i < totalNodes; i++) {
-				const { neighbors } = nodes[i];
+				const neighbors = nodes[i][3];
 				const idx = i * 4;
 
 				// Pack the 4 neighbor indices directly across the 4 color channels.
@@ -484,7 +447,6 @@ ctx.fill();
 				case 1: return 0;
 				case 2: return 3;
 				case 3: return 2;
-				//default: return 0;
 				}
 			}
 
@@ -494,25 +456,27 @@ ctx.fill();
 
 				if (u_mode == 1) { //initilization (place food and seed cell)
 					if (int(gl_FragCoord.x) == 128 && int(gl_FragCoord.y) == 128) { //place seed cell
-						fragColor = vec4(1.0, 1.0, 0.1, 0.25);
+						fragColor = vec4(1.0, 1.0, 1.0/255.0, 1.0);
 					}
 					else if (rand(uv) > 0.05) { //place food (energy and materials)
-						fragColor = vec4(0.5, 0.0, 0.0, 0.0);
+						fragColor = vec4(0.5, 0.0, 0.0, 1.0);
 					}
 					else{ //else make empty
-						fragColor = vec4(0.0, 0.0, 0.0, 0.0);
+						fragColor = vec4(0.0, 0.0, 0.0, 1.0);
 					}
 					return;
 				}
+				
+				//simulation mode
 
 				//read world contents and neighbors at a pixel
 				vec4 current = texture(u_state_texture, uv);
+				fragColor = current;
 				vec4 neighbors[4];
 				neighbors[0] = texture(u_state_texture, uv + vec2(0.0, texel.y));
 				neighbors[1] = texture(u_state_texture, uv + vec2(0.0, -texel.y));
 				neighbors[2] = texture(u_state_texture, uv + vec2(texel.x, 0.0));
 				neighbors[3] = texture(u_state_texture, uv + vec2(-texel.x, 0.0));
-				int revNeighbors[4] = int[](1,0,3,2);
 
 				// --- Gather cell instantiation Logic (can't scatter (write to adjacent pixels) in pixel shader) ---
 				float newCurrentDirectiveID = 0.0;
@@ -528,21 +492,22 @@ ctx.fill();
 						//Is the neighbor alive, and does it desire a new node in the current location? (Gather step)
 						if ( n.g > 0.5 ) {
 							float neighborDirectiveIndex = n.b;
-							vec2 neighborDirectiveTexCoord = vec2(neighborDirectiveIndex, 0.5);
-							vec4 posibParent = texture(u_directive_texture, neighborDirectiveTexCoord);
-							float posibCurrentID = posibParent[revNeighbor(i)];
-							if ( posibCurrentID != 0.0) {
-								newCurrentDirectiveID = posibCurrentID;
+							if( neighborDirectiveIndex > 0.0 ){
+								vec2 neighborDirectiveTexCoord = vec2(neighborDirectiveIndex, 0.5);
+								vec4 posibParent = texture(u_directive_texture, neighborDirectiveTexCoord);
+								float posibCurrentID = posibParent[revNeighbor(i)];
+								if ( posibCurrentID > 0.0) {
+									newCurrentDirectiveID = posibCurrentID;
+								}
 							}
 						}
 					}
 					if (newCurrentDirectiveID != 0.0) { //write results of gather to current state_texture pixel
-						fragColor.g = 1.0; // Wake up cell state to alive
-						fragColor.b = newCurrentDirectiveID;
+						fragColor.g = 1.0; // create alive cell here (should prevent another check to replicate to here)
+						fragColor.b = newCurrentDirectiveID;  //assign id in directive graph to cell
 						return;
 					}
 				}
-				fragColor = current;
 			}`;
 
 		function createShader(gl, type, source) {
