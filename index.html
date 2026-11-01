@@ -73,7 +73,7 @@
 
 	<div class="container">
 		<h2 style="margin: 0 0 5px 0; font-weight: 400; color: #00ffcc;">Decentralized Co-operative Matter</h2>
-		<p style="margin: 0 0 20px 0; font-size: 13px; color: #888;">The sub-units now build outward using relative tracking logic vectors</p>
+		<p style="margin: 0 0 20px 0; font-size: 13px; color: #888;">program self replicating units to build a directive pattern</p>
 
 		<div class="canvases">
 			<div>
@@ -114,20 +114,29 @@
 		<div id="3d-visualizer" style="width: 256px; height: 256px; border: 2px solid #333; margin-top:10px; border-radius:4px;"></div>
 		<button id="resetViewBtn">Reset View</button>
 	</div>
+	
+	<script>
+		//constants used
+		
+		const INPUT_IMG_DIM = 256;
+		const MAX_DIR_GRAPH_NODES = 256;
+		
+		const DIR_GRAPH_VIS_DIM = 256;
+	</script>
 
 	<script>
 		const viewerEl = document.getElementById('3d-visualizer');
 		const scene = new THREE.Scene();
 		const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
 		const renderer = new THREE.WebGLRenderer({ antialias: true });
-		renderer.setSize(256, 256);
+		renderer.setSize(DIR_GRAPH_VIS_DIM, DIR_GRAPH_VIS_DIM);
 		viewerEl.appendChild(renderer.domElement);
 
-		camera.position.set(256, 256, 300);
-		camera.lookAt(256, 256, 0);
+		camera.position.set(INPUT_IMG_DIM, INPUT_IMG_DIM, 300);
+		camera.lookAt(INPUT_IMG_DIM, INPUT_IMG_DIM, 0);
 
 		let currentMeshGroup = new THREE.Group();
-		currentMeshGroup.position.set(-128, -128, 0);
+		currentMeshGroup.position.set(-INPUT_IMG_DIM/2, -INPUT_IMG_DIM/2, 0);
 		scene.add(currentMeshGroup);
 
 		window.render3DGraph = function(nodes) {
@@ -145,7 +154,7 @@
 				//staircase depth of nodes for additional distinction in visualization
 				let zDepth = 2;
 				const zValue = (index % 12) * (zDepth/2) - (zDepth/2);
-				const pos = new THREE.Vector3(node.x, 256-node.y, zValue);
+				const pos = new THREE.Vector3(node.x, INPUT_IMG_DIM-node.y, zValue);
 
 				// 1. Generate a unique color based on the node's index
 				// This spreads colors evenly around the color wheel (0.0 to 1.0)
@@ -167,7 +176,7 @@
 						const nz = (neighborIndex % 12) * (zDepth/2) - (zDepth/2);
 						edgePositions.push(
 							pos.x, pos.y, pos.z,
-							neighbor.x, 256-neighbor.y, nz
+							neighbor.x, INPUT_IMG_DIM-neighbor.y, nz
 						);
 					}
 				});
@@ -254,7 +263,7 @@
 
 		function initCanvasBlueprint() {
 			ctx.fillStyle = '#000000';
-			ctx.fillRect(0, 0, 256, 256);
+			ctx.fillRect(0, 0, INPUT_IMG_DIM, INPUT_IMG_DIM);
 
 			ctx.strokeStyle = '#ffffff';
 			ctx.lineWidth = 14;
@@ -278,8 +287,8 @@
 		function draw(e) {
 			if (!isDrawing) return;
 			const rect = targetCanvas.getBoundingClientRect();
-			const x = (e.clientX - rect.left) * (256 / rect.width);
-			const y = (e.clientY - rect.top) * (256 / rect.height);
+			const x = (e.clientX - rect.left) * (INPUT_IMG_DIM / rect.width);
+			const y = (e.clientY - rect.top) * (INPUT_IMG_DIM / rect.height);
 
 			ctx.fillStyle = '#ffffff';
 			ctx.beginPath();
@@ -333,6 +342,7 @@
 			const stride = 4;
 
 			// 1. Sparse Sampling of input bitmap pixels, find nodes that should be solid
+			let numNodesCreated = 0;
 			for (let y = step; y < h - step; y += step) {
 				for (let x = step; x < w - step; x += step) {
 					if (pixels[xyI( x,y,w, stride)]) {
@@ -344,6 +354,10 @@
 						}
 
 						nodes.push( [ 0, x, y, neighbors ] ); //node 0: index, 1: x , 2: y, 3 array of 4 neighbors (1 or 0 at this point)
+						
+						numNodesCreated += 1;
+						if( numNodesCreated >= MAX_DIR_GRAPH_NODES )
+							break;
 					}
 				}
 			}
@@ -373,11 +387,11 @@
 		}
 
 		// Each graph node takes exactly 1 pixel (4 consecutive Floats: R, G, B, A)
-		const graphArray = new Float32Array(256 * 4);
+		const graphArray = new Float32Array(MAX_DIR_GRAPH_NODES * 4);
 
 		function compileDirectives() {
-			const imgData = ctx.getImageData(0, 0, 256, 256);
-			const w = 256, h = 256;
+			const imgData = ctx.getImageData(0, 0, INPUT_IMG_DIM, INPUT_IMG_DIM);
+			const w = INPUT_IMG_DIM, h = INPUT_IMG_DIM;
 
 			const meshNodes = buildMeshFromImage(imgData, w, h);
 
@@ -394,7 +408,7 @@
 
 		function updateDirectiveTexture(nodes) {
 			graphArray.fill(0.0); // Clear state
-			const totalNodes = Math.min(nodes.length, 256);
+			const totalNodes = Math.min(nodes.length, MAX_DIR_GRAPH_NODES);
 
 			for (let i = 0; i < totalNodes; i++) {
 				const neighbors = nodes[i][3];
