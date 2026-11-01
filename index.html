@@ -123,10 +123,11 @@
 		renderer.setSize(256, 256);
 		viewerEl.appendChild(renderer.domElement);
 
-		camera.position.set(128, 128, 300);
-		camera.lookAt(128, 128, 0);
+		camera.position.set(256, 256, 300);
+		camera.lookAt(256, 256, 0);
 
 		let currentMeshGroup = new THREE.Group();
+		currentMeshGroup.position.set(-128, -128, 0);
 		scene.add(currentMeshGroup);
 
 		window.render3DGraph = function(nodes) {
@@ -144,7 +145,7 @@
 				//staircase depth of nodes for additional distinction in visualization
 				let zDepth = 2;
 				const zValue = (index % 12) * (zDepth/2) - (zDepth/2);
-				const pos = new THREE.Vector3(node.x, node.y, zValue);
+				const pos = new THREE.Vector3(node.x, 256-node.y, zValue);
 
 				// 1. Generate a unique color based on the node's index
 				// This spreads colors evenly around the color wheel (0.0 to 1.0)
@@ -163,10 +164,10 @@
 					if (neighborIndex > 0) {
 						const neighbor = nodes[neighborIndex-1];
 						if (!neighbor) return;
-						const nz = (neighborIndex % 12) * 0.4;
+						const nz = (neighborIndex % 12) * (zDepth/2) - (zDepth/2);
 						edgePositions.push(
 							pos.x, pos.y, pos.z,
-							neighbor.x, neighbor.y, nz
+							neighbor.x, 256-neighbor.y, nz
 						);
 					}
 				});
