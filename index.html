@@ -5,64 +5,67 @@
 	<title>Autonomous Cellular Automaton (Relative Logic)</title>
 	<style>
 		body {
-		    margin: 0;
-		    background-color: #121212;
-		    color: #e0e0e0;
-		    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-		    display: flex;
-		    flex-direction: column;
-		    align-items: center;
-		    justify-content: center;
-		    min-height: 100vh;
-		    overflow: scroll;
+			margin: 0;
+			background-color: #121212;
+			color: #e0e0e0;
+			font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			justify-content: center;
+			min-height: 100vh;
+			overflow: scroll;
 		}
 		.container {
-		    display: flex;
-		    flex-direction: column;
-		    align-items: center;
-		    background: #1e1e1e;
-		    padding: 25px;
-		    border: 1px solid black;
-		    border-radius: 12px;
-		    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			background: #1e1e1e;
+			padding: 25px;
+			border: 1px solid black;
+			border-radius: 12px;
+			box-shadow: 0 8px 32px rgba(0,0,0,0.5);
 		}
 		.canvases {
-		    display: flex;
-		    gap: 25px;
-		    margin-bottom: 15px;
+			display: flex;
+			gap: 25px;
+			margin-bottom: 15px;
 		}
 		canvas {
-		    background: #000;
-		    border: 2px solid #333;
-		    border-radius: 4px;
-		    image-rendering: pixelated;
+			background: #000;
+			border: 2px solid #333;
+			border-radius: 4px;
+			image-rendering: pixelated;
 		}
-		#targetCanvas { cursor: crosshair; }
+		#targetCanvas { 
+			cursor: crosshair;
+			touch-action: none;
+		}
 		#controls {
-		    display: flex;
-		    gap: 12px;
-		    align-items: center;
-		    flex-wrap: wrap;
-		    justify-content: center;
-		    margin-top: 10px;
+			display: flex;
+			gap: 12px;
+			align-items: center;
+			flex-wrap: wrap;
+			justify-content: center;
+			margin-top: 10px;
 		}
 		button, select {
-		    background: #333;
-		    color: #fff;
-		    border: 1px solid #444;
-		    padding: 8px 16px;
-		    border-radius: 6px;
-		    cursor: pointer;
-		    font-weight: 500;
-		    transition: background 0.2s;
+			background: #333;
+			color: #fff;
+			border: 1px solid #444;
+			padding: 8px 16px;
+			border-radius: 6px;
+			cursor: pointer;
+			font-weight: 500;
+			transition: background 0.2s;
 		}
 		button:hover, select:hover { background: #444; }
 		.label-text {
-		    font-size: 13px;
-		    color: #aaa;
-		    text-align: center;
-		    margin-top: 6px;
-		    font-weight: 500;
+			font-size: 13px;
+			color: #aaa;
+			text-align: center;
+			margin-top: 6px;
+			font-weight: 500;
 		}
 	</style>
 </head>
@@ -100,8 +103,8 @@
 			</select>
 		</div>
 		<div class="status">
-        Legend: <span style="color:#222;">■</span> Empty | <span style="color:#770000;">■</span> Raw Material | <span style="color:#0000cc;">■</span> Directive Index
-	    </div>
+			Legend: <span style="color:#222;">■</span> Empty | <span style="color:#770000;">■</span> Raw Material | <span style="color:#0000cc;">■</span> Directive Index
+		</div>
 	</div>
 
 	<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -263,11 +266,14 @@
 			ctx.stroke();
 		}
 		initCanvasBlueprint();
+		
 
-		targetCanvas.addEventListener('mousedown', () => isDrawing = true);
-		window.addEventListener('mouseup', () => { if (isDrawing) { isDrawing = false; compileDirectives(); } });
-		targetCanvas.addEventListener('mousemove', draw);
-
+		function startDrawing(e){
+			e.preventDefault();
+			isDrawing = true;
+			targetCanvas.setPointerCapture(e.pointerId);
+			draw(e); // Draw the initial dot, even if the pointer doesn't move.
+		}
 		function draw(e) {
 			if (!isDrawing) return;
 			const rect = targetCanvas.getBoundingClientRect();
@@ -277,8 +283,24 @@
 			ctx.fillStyle = '#ffffff';
 			ctx.beginPath();
 			ctx.arc(x, y, 8, 0, 2 * Math.PI);
-ctx.fill();
+			ctx.fill();
 		}
+		function finishDrawing(e) {
+			if (!isDrawing) return;
+			isDrawing = false;
+			compileDirectives();
+			stepEngineSimulation(1);
+		}
+		targetCanvas.addEventListener('pointerdown', startDrawing);
+		targetCanvas.addEventListener('pointermove', draw);		
+		targetCanvas.addEventListener('pointerup', finishDrawing);
+		targetCanvas.addEventListener('pointercancel', finishDrawing);
+
+		targetCanvas.addEventListener('mousedown', () => isDrawing = true);
+		targetCanvas.addEventListener('mousemove', draw);
+		window.addEventListener('mouseup', finishDrawing );
+
+
 
 		const NUM_NEIGHBORS = 4;
 		function xyI( x, y, width, stride){ //xy coordinate to pixel index
