@@ -286,8 +286,8 @@ ctx.fill();
 		}
 		function nDToI( d, x, y, w, step, s ){
 			switch( d ){
-				case 0: return xyI( x     , y+step, w, s);
-				case 1: return xyI( x+0   , y-step, w, s);
+				case 0: return xyI( x     , y-step, w, s);
+				case 1: return xyI( x+0   , y+step, w, s);
 				case 2: return xyI( x+step, y+0,    w, s);
 				case 3: return xyI( x-step, y+0,    w, s);
 			}
@@ -451,8 +451,8 @@ ctx.fill();
 			}
 
 			void main() {
+				ivec2 pixel = ivec2(gl_FragCoord.xy - vec2(0.5));
 				vec2 uv = gl_FragCoord.xy / u_resolution; //coordinates of pixel
-				vec2 texel = 1.0 / u_resolution; //distance of 1 pixel
 
 				if (u_mode == 1) { //initilization (place food and seed cell)
 					if (int(gl_FragCoord.x) == 128 && int(gl_FragCoord.y) == 128) { //place seed cell
@@ -473,10 +473,10 @@ ctx.fill();
 				vec4 current = texture(u_state_texture, uv);
 				fragColor = current;
 				vec4 neighbors[4];
-				neighbors[0] = texture(u_state_texture, uv + vec2(0.0, texel.y));
-				neighbors[1] = texture(u_state_texture, uv + vec2(0.0, -texel.y));
-				neighbors[2] = texture(u_state_texture, uv + vec2(texel.x, 0.0));
-				neighbors[3] = texture(u_state_texture, uv + vec2(-texel.x, 0.0));
+				neighbors[0] = texelFetch(u_state_texture, pixel + ivec2( 0,  1), 0);
+				neighbors[1] = texelFetch(u_state_texture, pixel + ivec2( 0, -1), 0);
+				neighbors[2] = texelFetch(u_state_texture, pixel + ivec2( 1,  0), 0);
+				neighbors[3] = texelFetch(u_state_texture, pixel + ivec2(-1,  0), 0);
 
 				// --- Gather cell instantiation Logic (can't scatter (write to adjacent pixels) in pixel shader) ---
 				float newCurrentDirectiveID = 0.0;
@@ -491,10 +491,10 @@ ctx.fill();
 						vec4 n = neighbors[i];
 						//Is the neighbor alive, and does it desire a new node in the current location? (Gather step)
 						if ( n.g > 0.5 ) {
-							float neighborDirectiveIndex = n.b;
-							if( neighborDirectiveIndex > 0.0 ){
-								vec2 neighborDirectiveTexCoord = vec2(neighborDirectiveIndex, 0.5);
-								vec4 posibParent = texture(u_directive_texture, neighborDirectiveTexCoord);
+							int neighborDirectiveIndex = int(round(n.b * 255.0) );
+							if( neighborDirectiveIndex > 0 ){
+								ivec2 neighborDirectiveTexCoord = ivec2(neighborDirectiveIndex, 0.0);
+								vec4 posibParent = texelFetch(u_directive_texture, neighborDirectiveTexCoord, 0);
 								float posibCurrentID = posibParent[revNeighbor(i)];
 								if ( posibCurrentID > 0.0) {
 									newCurrentDirectiveID = posibCurrentID;
