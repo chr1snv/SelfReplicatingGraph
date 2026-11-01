@@ -281,15 +281,15 @@ ctx.fill();
 		}
 
 		const NUM_NEIGHBORS = 4;
-		function xyI( x, y, width, stride){
+		function xyI( x, y, width, stride){ //xy coordinate to pixel index
 			return (y * width + x)*stride;
 		}
-		function nDToI( d, x, y, w, step, s ){
+		function nDToI( d, x, y, w, step, s ){ //neighbor direction to pixel index
 			switch( d ){
 				case 0: return xyI( x     , y-step, w, s);
-				case 1: return xyI( x+0   , y+step, w, s);
-				case 2: return xyI( x+step, y+0,    w, s);
-				case 3: return xyI( x-step, y+0,    w, s);
+				case 1: return xyI( x     , y+step, w, s);
+				case 2: return xyI( x+step, y,      w, s);
+				case 3: return xyI( x-step, y,      w, s);
 			}
 		}
 
@@ -309,7 +309,7 @@ ctx.fill();
 			
 			const stride = 4;
 
-			// 1. Sparse Sampling find nodes
+			// 1. Sparse Sampling of input bitmap pixels, find nodes that should be solid
 			for (let y = step; y < h - step; y += step) {
 				for (let x = step; x < w - step; x += step) {
 					if (pixels[xyI( x,y,w, stride)]) {
@@ -436,18 +436,18 @@ ctx.fill();
 				return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453 + u_rand_seed);
 			}
 
-			float dirDistance(float dirValue, float target) {
-				float wrapped = abs(fract(dirValue - target + 1.0));
-				return min(abs(dirValue - target), abs(wrapped));
+
+			int revNeighbor(int i){ //given which direction went to get this neighbor, return the reverse
+				switch(i){
+				case 0: return 1; //rev of n is s
+				case 1: return 0; //rev of s is n
+				case 2: return 3; //rev of e is w
+				case 3: return 2; //rev of w is e
+				}
 			}
 			
-			int revNeighbor(int i){
-				switch(i){
-				case 0: return 1;
-				case 1: return 0;
-				case 2: return 3;
-				case 3: return 2;
-				}
+			bool fCmp( float a, float b){
+				return abs( a - b ) < 0.0001;
 			}
 
 			void main() {
@@ -479,7 +479,9 @@ ctx.fill();
 				neighbors[3] = texelFetch(u_state_texture, pixel + ivec2(-1,  0), 0);
 
 				// --- Gather cell instantiation Logic (can't scatter (write to adjacent pixels) in pixel shader) ---
-				float newCurrentDirectiveID = 0.0;
+				int currentID = int(round(current.b * 255.0) );
+				
+				int newCurrentID = 0;
 
 				// only check if adjacent cell should replicate to here if is inactive/empty slot ready to receive a cell state.
 				if (current.g < 0.5) {
@@ -495,16 +497,16 @@ ctx.fill();
 							if( neighborDirectiveIndex > 0 ){
 								ivec2 neighborDirectiveTexCoord = ivec2(neighborDirectiveIndex, 0.0);
 								vec4 posibParent = texelFetch(u_directive_texture, neighborDirectiveTexCoord, 0);
-								float posibCurrentID = posibParent[revNeighbor(i)];
-								if ( posibCurrentID > 0.0) {
-									newCurrentDirectiveID = posibCurrentID;
+								int posibCurrentID = int(round(posibParent[revNeighbor(i)]* 255.0) );
+								if ( ( posibCurrentID > 1 ) && (posibCurrentID != currentID) ) {  //is bigger than first, and is new
+									newCurrentID = posibCurrentID;
 								}
 							}
 						}
 					}
-					if (newCurrentDirectiveID != 0.0) { //write results of gather to current state_texture pixel
+					if ( newCurrentID > 1  && newCurrentID < 21 ) { //write results of gather to current state_texture pixel
 						fragColor.g = 1.0; // create alive cell here (should prevent another check to replicate to here)
-						fragColor.b = newCurrentDirectiveID;  //assign id in directive graph to cell
+						fragColor.b = float(newCurrentID) / 255.0;  //assign id in directive graph to cell
 						return;
 					}
 				}
