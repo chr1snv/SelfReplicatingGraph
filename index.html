@@ -120,6 +120,8 @@
 		
 		const INPUT_IMG_DIM = 256;
 		const MAX_DIR_GRAPH_NODES = 256;
+		const DIR_NODE_NEIGHBORS = 4;
+		const DIR_NODE_ID_BYTES = 2;
 		
 		const DIR_GRAPH_VIS_DIM = 256;
 	</script>
@@ -173,7 +175,7 @@
 					if (neighborIndex > 0) {
 						const neighbor = nodes[neighborIndex-1];
 						if (!neighbor) return;
-						const nz = (neighborIndex % 12) * (zDepth/2) - (zDepth/2);
+						const nz = ((neighborIndex-1) % 12) * (zDepth/2) - (zDepth/2);
 						edgePositions.push(
 							pos.x, pos.y, pos.z,
 							neighbor.x, INPUT_IMG_DIM-neighbor.y, nz
@@ -316,91 +318,229 @@
 		function xyI( x, y, width, stride){ //xy coordinate to pixel index
 			return (y * width + x)*stride;
 		}
-		function nDToI( d, x, y, w, step, s ){ //neighbor direction to pixel index
-			switch( d ){
-				case 0: return xyI( x     , y-step, w, s);
-				case 1: return xyI( x     , y+step, w, s);
-				case 2: return xyI( x+step, y,      w, s);
-				case 3: return xyI( x-step, y,      w, s);
+		function nDToI(d, x, y, w, h, step, stride) { //neighbor direction to pixel index
+			switch (d) {
+				case 0: y -= step; break;
+				case 1: y += step; break;
+				case 2: x += step; break;
+				case 3: x -= step; break;
+				default: return -1;
+			}
+			if (x < 0 || x >= w || y < 0 || y >= h) return -1;
+			return xyI(x, y, w, stride);
+		}
+		function revNeighbor( i){ //given which direction went to get this neighbor, return the reverse
+			switch(i){
+			case 0: return 1; //rev of n is s
+			case 1: return 0; //rev of s is n
+			case 2: return 3; //rev of e is w
+			case 3: return 2; //rev of w is e
 			}
 		}
 
-		/**
-		 * Builds a 2D mesh grid layout mapping exactly up to 4 orthogonal neighbors per cell.
-		 * 
-		 * @param {Uint8Array} occupied - Flat binary map array (1 = filled, 0 = empty).
-		 * @param {number} w - Width of the image canvas.
-		 * @param {number} h - Height of the image canvas.
-		 * @returns {Array<Object>} Array of mesh nodes {x, y, neighbors: [N, S, E, W]}.
-		 */
-		function buildMeshFromImage(imgData, w, h) {
-			const pixels = imgData.data;
-		
-			const step = 8;
-			const nodes = [];
-			
-			const stride = 4;
 
-			// 1. Sparse Sampling of input bitmap pixels, find nodes that should be solid
-			let numNodesCreated = 0;
-			for (let y = step; y < h - step; y += step) {
-				for (let x = step; x < w - step; x += step) {
-					if (pixels[xyI( x,y,w, stride)]) {
-						// Node indices must be 1-based because 0 represents an empty slot
-						let neighbors = [0,0,0,0];
-						//check if neighbors are filled in
-						for( let j = 0; j < NUM_NEIGHBORS; ++j ){
-							neighbors[j] = pixels[nDToI(j, x, y, w, step, stride)] ? 1 : 0;
+		function spiralStepFindClosestActivePixelToCenter(center, foundCoord, pixels, step, stride, maxDim, minRing, maxRings, visitedSet){
+			//spiral outwards from given center to find the next closest unvisited pixIdx
+			let filledPixFound = false;
+
+			const maxXRings = Math.min(center[0]-0, maxDim-center[0]);
+			const maxYRings = Math.min(center[1]-0, maxDim-center[1]);
+			const numRings = Math.min( maxXRings/2, maxYRings/2, maxRings);
+			for( let rN = minRing; !filledPixFound && rN < numRings; ++rN ){
+
+				let topLeft     = [center[0] - rN, center[1] - rN];
+				let topRight    = [center[0] + rN, center[1] - rN];
+				let bottomRight = [center[0] + rN, center[1] + rN];
+				let bottomLeft  = [center[0] - rN, center[1] + rN];
+				//top left to right
+				if( topLeft[1] % step == 0 && topLeft[1] >= 0) //line is on a step and within image bounds
+					for( let x = topLeft[0]; !filledPixFound && x <= topRight[0]; ++x ){
+						if( x % step == 0 ){
+							let coord = [x, topLeft[1]];
+							const pixIdx = xyI( coord[0], coord[1], maxDim, stride);
+							if ( pixels[pixIdx] && !visitedSet.has(pixIdx) ) {
+								foundCoord[0] = coord[0]; foundCoord[1] = coord[1]; foundCoord[2] = pixIdx;
+								visitedSet.add(pixIdx);
+								filledPixFound = true;
+							}
 						}
+					}
+				//right top to bottom
+				if( !filledPixFound && topRight[0] % step == 0 && topRight[0] <= maxDim)
+					for( let y = topRight[1]; !filledPixFound && y <= bottomRight[1]; ++y ){
+						if( y % step == 0 ){
+							let coord = [topRight[0], y];
+							const pixIdx = xyI( coord[0], coord[1], maxDim, stride);
+							if (pixels[pixIdx] && !visitedSet.has(pixIdx) ) {
+								foundCoord[0] = coord[0]; foundCoord[1] = coord[1]; foundCoord[2] = pixIdx;
+								visitedSet.add(pixIdx);
+								filledPixFound = true;
+							}
+						}
+					}
+				//bottom right to left
+				if( bottomRight[1] % step == 0 && bottomRight[1] <= maxDim)
+					for( let x = bottomRight[0]; !filledPixFound && x >= bottomLeft[0]; --x ){
+						if( x % step == 0 ){
+							let coord = [x,bottomRight[1]];
+							const pixIdx = xyI( coord[0], coord[1], maxDim, stride);
+							if (pixels[pixIdx] && !visitedSet.has(pixIdx) ) {
+								foundCoord[0] = coord[0]; foundCoord[1] = coord[1]; foundCoord[2] = pixIdx;
+								visitedSet.add(pixIdx);
+								filledPixFound = true;
+							}
+						}
+					}
+				//left bottom to top
+				if( !filledPixFound && bottomLeft[0] % step == 0 && bottomLeft[0] >= 0)
+					for( let y = bottomLeft[1]; !filledPixFound && y >= topLeft[1]; --y ){
+						if( y % step == 0 ){
+							let coord = [bottomLeft[0],y];
+							const pixIdx = xyI( coord[0], coord[1], maxDim, stride);
+							if (pixels[pixIdx] && !visitedSet.has(pixIdx) ) {
+								foundCoord[0] = coord[0]; foundCoord[1] = coord[1]; foundCoord[2] = pixIdx;
+								visitedSet.add(pixIdx);
+								filledPixFound = true;
+							}
+						}
+					}
+			}
+			return filledPixFound;
+		}
 
-						nodes.push( [ 0, x, y, neighbors ] ); //node 0: index, 1: x , 2: y, 3 array of 4 neighbors (1 or 0 at this point)
-						
-						numNodesCreated += 1;
-						if( numNodesCreated >= MAX_DIR_GRAPH_NODES )
-							break;
+
+		function buildMeshFromImageBFS(imgData, iDim) {
+
+
+			//check recipriosity
+			let recipCheckPassed = true;
+			for( let i = 0; recipCheckPassed && i < nodes.length; ++i ){
+				let node = nodes[i];
+				for( let j = 0; j < NUM_NEIGHBORS; ++j ){ //for each neighbor check its reverse direction points back to this node
+					let nbrIdx = node[3][j];
+					if( nbrIdx == 0 )
+						continue;
+					if( nbrIdx > MAX_DIR_GRAPH_NODES || nbrIdx < 1 ){
+						console.log( 'recpi check failed node ' + node[0] + ' nbr ' + j + ' doesnt exist ' + nbrIdx );
+						recipCheckPassed = false;
+					}else{
+						let nbr = nodes[nbrIdx-1];
+						if( nbr[3][revNeighbor(j)] != i+1 ){
+							console.log( 'recpi check failed node ' + node[0] + ' nbr ' + j + ' revNbr is ' +  nbr[3][revNeighbor(j)] );
+							recipCheckPassed = false;
+						}
 					}
 				}
 			}
 
-			//assign node indicies
-			for( let i = 0; i < nodes.length; ++i ){
-				let nodeIdx = i + 1;
-				let node = nodes[i];
-				node[0] = nodeIdx;
-				pixels[ xyI(node[1], node[2], w, stride) ] = nodeIdx; //store it also in image for neighbor lookup
+			if( recipCheckPassed )
+				return nodes;
+			return [];
+		}
+		
+		
+		function buildCenterOutGraph(imgData, iDim, step = 8) {
+			const pixels = imgData.data;
+			const occupied = (x, y) => {
+			if (x < 0 || y < 0 || x >= iDim || y >= iDim) return false;
+
+			const byteIdx = (y * iDim + x) * 4;
+			return pixels[byteIdx ] > 0; // alpha; adapt if occupancy uses color
+			};
+
+			// Sample occupied locations and find their centroid.
+			const samples = [];
+			let sumX = 0;
+			let sumY = 0;
+
+			for (let y = 0; y < iDim; y += step) {
+			for (let x = 0; x < iDim; x += step) {
+			  if (occupied(x, y)) {
+				samples.push([x, y]);
+				sumX += x;
+				sumY += y;
+			  }
 			}
-			ctx.putImageData( imgData, 0, 0 ); //write indicies back to canvas for sampling visualization
-			
-			
-			//lookup neighbors and store their indicies (replace 1 neighbors with index from pixels)
-			for( let i = 0; i < nodes.length; ++i ){
-				let node = nodes[i];
-				for( let j = 0; j < NUM_NEIGHBORS; ++j ){ //for each neighbor lookup their index
-					if( node[3][j] ){ //overwrite the 1 with the neighbors index
-						let pixVal = pixels[nDToI( j, node[1], node[2], w, step, stride )];
-						node[3][j] = pixVal;
+			}
+
+			if (samples.length === 0) return [];
+
+			const cx = sumX / samples.length;
+			const cy = sumY / samples.length;
+
+			// Start at the occupied sample nearest the centroid.
+			samples.sort((a, b) =>
+			(a[0] - cx) ** 2 + (a[1] - cy) ** 2 -
+			((b[0] - cx) ** 2 + (b[1] - cy) ** 2)
+			);
+
+			const directions = [
+			[0, -step], // N
+			[0,  step], // S
+			[step, 0],  // E
+			[-step, 0], // W
+			];
+
+			const key = (x, y) => `${x},${y}`;
+			const seen = new Set();
+			const queue = [];
+			const nodes = [];
+
+			function addNode(x, y, parentId) {
+				const id = nodes.length + 1;
+				seen.add(key(x, y)); // mark when enqueued
+				queue.push([x, y, id]);
+
+				// [id, x, y, parentId, neighbors]
+				nodes.push([id, x, y, parentId, [0, 0, 0, 0]]);
+				return id;
+			}
+
+			addNode(samples[0][0], samples[0][1], 0);
+
+			// BFS assigns IDs in center-outward distance order.
+			for (let head = 0; head < queue.length; head++) {
+				const [x, y, id] = queue[head];
+
+				for (const [dx, dy] of directions) {
+					const nx = x + dx;
+					const ny = y + dy;
+					const k = key(nx, ny);
+
+					if ( nodes.length < MAX_DIR_GRAPH_NODES && occupied(nx, ny) && !seen.has(k)) {
+						addNode(nx, ny, id);
 					}
 				}
+			}
+
+			// Fill neighbor IDs after all reachable nodes have been assigned.
+			const idAt = new Map(nodes.map(([id, x, y]) => [key(x, y), id]));
+
+			for (const node of nodes) {
+			const [, x, y] = node;
+			node[4] = directions.map(([dx, dy]) =>
+			  idAt.get(key(x + dx, y + dy)) ?? 0
+			);
 			}
 
 			return nodes;
 		}
 
+
 		// Each graph node takes exactly 1 pixel (4 consecutive Floats: R, G, B, A)
-		const graphArray = new Float32Array(MAX_DIR_GRAPH_NODES * 4);
+		const graphArray = new Float32Array(MAX_DIR_GRAPH_NODES * DIR_NODE_NEIGHBORS * DIR_NODE_ID_BYTES );
 
 		function compileDirectives() {
 			const imgData = ctx.getImageData(0, 0, INPUT_IMG_DIM, INPUT_IMG_DIM);
-			const w = INPUT_IMG_DIM, h = INPUT_IMG_DIM;
 
-			const meshNodes = buildMeshFromImage(imgData, w, h);
+			const meshNodes = buildCenterOutGraph(imgData, INPUT_IMG_DIM, step = 8);//buildMeshFromImageBFS(imgData, INPUT_IMG_DIM);
 
 			updateDirectiveTexture(meshNodes);
 			if (window.render3DGraph) {
 				window.render3DGraph(meshNodes.map((node) => ({
 					x: node[1],
 					y: node[2],
-					neighbors: node[3]
+					neighbors: node[4]
 				})));
 			}
 		}
@@ -408,38 +548,36 @@
 
 		function updateDirectiveTexture(nodes) {
 			graphArray.fill(0.0); // Clear state
-			const totalNodes = Math.min(nodes.length, MAX_DIR_GRAPH_NODES);
+			const totalNodes = Math.min(nodes.length, MAX_DIR_GRAPH_NODES );
+			
+			console.log('totalNodes: ' + totalNodes);
+			for( node in nodes) { console.log( (parseInt(node)+1) + ' ' + nodes[node][0] + '    ' + nodes[node][4].toString()); }
 
 			for (let i = 0; i < totalNodes; i++) {
-				const neighbors = nodes[i][3];
-				const idx = i * 4;
+				const neighbors = nodes[i][4];
+				const highIdx = i * 8;
+				const lowIdx = highIdx + 4;
 
-				// Pack the 4 neighbor indices directly across the 4 color channels.
-				// We normalize by dividing by 255.0 so it fits nicely into the texture.
-				graphArray[idx + 0] = neighbors[0] / 255.0; // Red channel   = North Index
-				graphArray[idx + 1] = neighbors[1] / 255.0; // Green channel = South Index
-				graphArray[idx + 2] = neighbors[2] / 255.0; // Blue channel  = East Index
-				graphArray[idx + 3] = neighbors[3] / 255.0; // Alpha channel = West Index
-				
-				// 1. Pack Coordinates Normalized (0.0 to 1.0) for easy shader math
-				//	graphArray[idx + 0] = node.x / 255.0; // Red channel: X coordinate 
-				//	graphArray[idx + 1] = node.y / 255.0; // Green channel: Y coordinate
+				for (let direction = 0; direction < 4; direction++) {
+					const neighborID = neighbors[direction];
+					const highByte = Math.floor(neighborID / 256);
+					const lowByte = neighborID % 256;
 
-				//	// 2. Structural metadata for neighbor tracking logic loops
-				//	graphArray[idx + 2] = node.neighbors.length / 3.0; // Blue: Neighbor saturation fraction
-				//	graphArray[idx + 3] = i / 255.0;                   // Alpha: Absolute Node UID Index
+					graphArray[highIdx + direction] = highByte / 255.0;
+					graphArray[lowIdx + direction] = lowByte / 255.0;
+				}
 			}
 
 			gl.bindTexture(gl.TEXTURE_2D, directiveTexture);
 			gl.texImage2D(
 				gl.TEXTURE_2D, 
 				0, 
-				gl.RGBA32F,             // Internal GPU format (high precision 32-bit floats)
-				256,                    // Width: 256 structural node slots allocation
-				1,                      // Height: 1 pixel tall data layout strip
+				gl.RGBA32F,									// Internal GPU format (high precision 32-bit floats)
+				MAX_DIR_GRAPH_NODES * DIR_NODE_ID_BYTES,	// Width: structural node slot neighbor id's allocation
+				1,											// Height: 1 pixel tall data layout strip
 				0, 
-				gl.RGBA,                // Format composition 
-				gl.FLOAT,               // Data transmission payload type
+				gl.RGBA,									// Format composition 
+				gl.FLOAT,									// Data transmission payload type
 				graphArray
 			);
 		}
@@ -517,36 +655,43 @@
 
 				// --- Gather cell instantiation Logic (can't scatter (write to adjacent pixels) in pixel shader) ---
 				int currentID = int(round(current.b * 255.0) );
-				
-				int newCurrentID = 0;
+
+				int newCurrentID = -1;
 
 				// only check if adjacent cell should replicate to here if is inactive/empty slot ready to receive a cell state.
-				if (current.g < 0.5) {
 
-					//vec2 cellDirectiveTexCoord = vec2(cell_index, 0.5);
-					//vec4 graphNode = texture(u_directive_texture, cellDirectiveTexCoord);
 
-					for( int i = 0; i < 4; ++i ){ //check n s e w neighbors
-						vec4 n = neighbors[i];
-						//Is the neighbor alive, and does it desire a new node in the current location? (Gather step)
-						if ( n.g > 0.5 ) {
-							int neighborDirectiveIndex = int(round(n.b * 255.0) );
-							if( neighborDirectiveIndex > 0 ){
-								ivec2 neighborDirectiveTexCoord = ivec2(neighborDirectiveIndex-1, 0.0);
-								vec4 posibParent = texelFetch(u_directive_texture, neighborDirectiveTexCoord, 0);
-								int posibCurrentID = int(round(posibParent[revNeighbor(i)]* 255.0) );
-								if ( ( posibCurrentID > 1 ) && (posibCurrentID != currentID) ) {  //is bigger than first, and is new
-									newCurrentID = posibCurrentID;
-								}
+				for( int i = 0; i < 4; ++i ){ //check n s e w neighbors
+					vec4 n = neighbors[i];
+					//Is the neighbor alive, and does it desire a new node in the current location? (Gather step)
+					if ( n.g > 0.5 ) {
+						int neighborID = int(round(n.b * 255.0) );
+						if( neighborID > 0 ){
+							//fetch possib parent 
+							ivec2 nbrDirectiveTexCoord = ivec2((neighborID - 1) * 2, 0);
+							vec4 neighborHighBytes = texelFetch(u_directive_texture, nbrDirectiveTexCoord, 0);
+							vec4 neighborLowBytes = texelFetch( u_directive_texture, nbrDirectiveTexCoord + ivec2(1, 0), 0 );
+							//use the reverse direction to find what the parent would have this node be
+							int direction = revNeighbor(i);
+							int highByte = int(round(neighborHighBytes[direction] * 255.0));
+							int lowByte = int(round(neighborLowBytes[direction] * 255.0));
+							int posibNewID = highByte * 256 + lowByte;
+							
+							if ( (posibNewID > neighborID ) && ( posibNewID > 1 ) && (posibNewID > currentID) ) {  //is bigger than first, and is new
+								newCurrentID = posibNewID;
+								break;
 							}
 						}
 					}
-					if ( newCurrentID > 1  && newCurrentID < 255 ) { //write results of gather to current state_texture pixel
-						fragColor.g = 1.0; // create alive cell here (should prevent another check to replicate to here)
-						fragColor.b = float(newCurrentID) / 255.0;  //assign id in directive graph to cell
-						return;
-					}
 				}
+				
+				if ( newCurrentID > 1  && newCurrentID < 255 && newCurrentID > currentID ) { //write results of gather to current state_texture pixel
+					fragColor.g = 1.0; // create alive cell here (should prevent another check to replicate to here)
+					fragColor.b = float(newCurrentID) / 255.0;  //assign id in directive graph to cell
+					return;
+				}
+				
+				
 			}`;
 
 		function createShader(gl, type, source) {
