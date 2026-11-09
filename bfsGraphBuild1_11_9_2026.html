@@ -406,96 +406,9 @@
 			return filledPixFound;
 		}
 
-		/**
-		 * Builds a 2D mesh grid layout mapping exactly up to 4 orthogonal neighbors per cell.
-		 * 
-		 * @param {Uint8Array} occupied - Flat binary map array (1 = filled, 0 = empty).
-		 * @param {number} w - Width of the image canvas.
-		 * @param {number} h - Height of the image canvas.
-		 * @returns {Array<Object>} Array of mesh nodes {x, y, neighbors: [N, S, E, W]}.
-		 */
+
 		function buildMeshFromImageBFS(imgData, iDim) {
-			const pixels = imgData.data;
 
-			const step = 8; //sampling grid spasity (number of pixels to step)
-			const nodes = [];
-			
-			const stride = 4; //channels per pixel
-
-
-
-			// Track raw pixel indices that we have already queued/processed as nodes
-			const visitedPixels = new Set();
-			let queue = [];
-
-			let startCoord = [iDim/2,iDim/2];
-			let foundCoord = [0,0,0];
-			//center, foundCoord, pixels, step, stride, maxDim, minRing, maxRings, visitedSet)
-			if( !spiralStepFindClosestActivePixelToCenter(startCoord, foundCoord, pixels, step, stride, iDim, 0, iDim/2, visitedPixels) )
-				return [];
-
-			// 1. Initialize the BFS at the designated start point
-			let foundPixIdx = xyI(foundCoord[0], foundCoord[1], iDim, stride);
-			queue.push( foundCoord );
-
-			let findNewNodes = true;
-
-			while (queue.length > 0 && findNewNodes ) { //do another round or wave of bfs
-				prevQueue = queue;
-				queue = [];
-				for( let i = 0; i < prevQueue.length; ++i ){
-					let preCoord = prevQueue[i];
-					//run from ring 1 to full width of image to find next new point
-					foundCoord = [0,0,0];
-					if( spiralStepFindClosestActivePixelToCenter(preCoord, foundCoord, pixels, step, stride, iDim, 1, iDim/2, visitedPixels) ){
-						queue.push(foundCoord);
-						
-						// Node indices must be 1-based because 0 represents an empty slot
-						let neighbors = [0,0,0,0];
-						//check if neighbors are filled in
-						for( let j = 0; j < NUM_NEIGHBORS; ++j ){
-							const nbrIdx = nDToI(j, foundCoord[0], foundCoord[1], iDim, iDim, step, stride);
-							neighbors[j] = (nbrIdx >= 0 && pixels[nbrIdx]) ? nbrIdx : 0; //if not out of bounds and is filled in assign it
-						}
-						
-						nodes.push( [ foundCoord[2], foundCoord[0], foundCoord[1], neighbors ] );
-						
-						if( nodes.length >= MAX_DIR_GRAPH_NODES-1 )
-							findNewNodes = false;
-					}
-				}
-
-			}
-
-
-
-			//map node indicies to range 1 to MAX_DIR_GRAPH_NODES-1
-			let pixToNodeIdxMap = {}
-			for( let i = 0; i < nodes.length; ++i ){
-				let nodeIdx = i + 1;
-				let node = nodes[i];
-
-				pixToNodeIdxMap[node[0]] = nodeIdx;
-
-				//pixels[ xyI(node[1], node[2], w, stride) ] = nodeIdx; //visualize sample points in image
-			}
-			//ctx.putImageData( imgData, 0, 0 ); //write to canvas for sampling visualization
-
-
-			//now that node ids have been generated, replace pixelIdxs with node ids
-			for( let i = 0; i < nodes.length; ++i ){
-				let node = nodes[i];
-				node[0] = pixToNodeIdxMap[node[0]];
-				for( let j = 0; j < NUM_NEIGHBORS; ++j ){ //for each neighbor lookup their id
-					let nbrPix = node[3][j];
-					if ( nbrPix > 0 && pixToNodeIdxMap[ nbrPix ] !== undefined ) {
-						let nbrId = pixToNodeIdxMap[nbrPix];
-						node[3][j] = nbrId;
-					}else{
-						node[3][j] = 0;
-					}
-				}
-			}
 
 			//check recipriosity
 			let recipCheckPassed = true;
@@ -522,6 +435,95 @@
 				return nodes;
 			return [];
 		}
+		
+		
+		function buildCenterOutGraph(imgData, iDim, step = 8) {
+			const pixels = imgData.data;
+			const occupied = (x, y) => {
+			if (x < 0 || y < 0 || x >= iDim || y >= iDim) return false;
+
+			const byteIdx = (y * iDim + x) * 4;
+			return pixels[byteIdx ] > 0; // alpha; adapt if occupancy uses color
+			};
+
+			// Sample occupied locations and find their centroid.
+			const samples = [];
+			let sumX = 0;
+			let sumY = 0;
+
+			for (let y = 0; y < iDim; y += step) {
+			for (let x = 0; x < iDim; x += step) {
+			  if (occupied(x, y)) {
+				samples.push([x, y]);
+				sumX += x;
+				sumY += y;
+			  }
+			}
+			}
+
+			if (samples.length === 0) return [];
+
+			const cx = sumX / samples.length;
+			const cy = sumY / samples.length;
+
+			// Start at the occupied sample nearest the centroid.
+			samples.sort((a, b) =>
+			(a[0] - cx) ** 2 + (a[1] - cy) ** 2 -
+			((b[0] - cx) ** 2 + (b[1] - cy) ** 2)
+			);
+
+			const directions = [
+			[0, -step], // N
+			[0,  step], // S
+			[step, 0],  // E
+			[-step, 0], // W
+			];
+
+			const key = (x, y) => `${x},${y}`;
+			const seen = new Set();
+			const queue = [];
+			const nodes = [];
+
+			function addNode(x, y, parentId) {
+				const id = nodes.length + 1;
+				seen.add(key(x, y)); // mark when enqueued
+				queue.push([x, y, id]);
+
+				// [id, x, y, parentId, neighbors]
+				nodes.push([id, x, y, parentId, [0, 0, 0, 0]]);
+				return id;
+			}
+
+			addNode(samples[0][0], samples[0][1], 0);
+
+			// BFS assigns IDs in center-outward distance order.
+			for (let head = 0; head < queue.length; head++) {
+			const [x, y, id] = queue[head];
+
+			for (const [dx, dy] of directions) {
+			  const nx = x + dx;
+			  const ny = y + dy;
+			  const k = key(nx, ny);
+
+			  if (occupied(nx, ny) && !seen.has(k)) {
+				addNode(nx, ny, id);
+			  }
+			}
+			}
+
+			// Fill neighbor IDs after all reachable nodes have been assigned.
+			const idAt = new Map(nodes.map(([id, x, y]) => [key(x, y), id]));
+
+			for (const node of nodes) {
+			const [, x, y] = node;
+			node[4] = directions.map(([dx, dy]) =>
+			  idAt.get(key(x + dx, y + dy)) ?? 0
+			);
+			}
+
+			return nodes;
+		}
+
 
 		// Each graph node takes exactly 1 pixel (4 consecutive Floats: R, G, B, A)
 		const graphArray = new Float32Array(MAX_DIR_GRAPH_NODES * 4);
@@ -529,14 +531,14 @@
 		function compileDirectives() {
 			const imgData = ctx.getImageData(0, 0, INPUT_IMG_DIM, INPUT_IMG_DIM);
 
-			const meshNodes = buildMeshFromImageBFS(imgData, INPUT_IMG_DIM);
+			const meshNodes = buildCenterOutGraph(imgData, INPUT_IMG_DIM, step = 8);//buildMeshFromImageBFS(imgData, INPUT_IMG_DIM);
 
 			updateDirectiveTexture(meshNodes);
 			if (window.render3DGraph) {
 				window.render3DGraph(meshNodes.map((node) => ({
 					x: node[1],
 					y: node[2],
-					neighbors: node[3]
+					neighbors: node[4]
 				})));
 			}
 		}
@@ -547,10 +549,10 @@
 			const totalNodes = Math.min(nodes.length, MAX_DIR_GRAPH_NODES);
 			
 			console.log('totalNodes: ' + totalNodes);
-			for( node in nodes) { console.log( (parseInt(node)+1) + ' ' + nodes[node][0] + ' ' + nodes[node][3].toString()); }
+			for( node in nodes) { console.log( (parseInt(node)+1) + ' ' + nodes[node][0] + '    ' + nodes[node][4].toString()); }
 
 			for (let i = 0; i < totalNodes; i++) {
-				const neighbors = nodes[i][3];
+				const neighbors = nodes[i][4];
 				const idx = i * 4;
 
 				// Pack the 4 neighbor indices directly across the 4 color channels.
