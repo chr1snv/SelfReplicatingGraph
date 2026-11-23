@@ -50,6 +50,9 @@ export const TelemetryCharts: React.FC<TelemetryChartsProps> = ({ simState }) =>
     TissueType.SENSOR,
     TissueType.MUSCLE,
     TissueType.FLAGELLA,
+    TissueType.DIGESTIVE,
+    TissueType.EXCRETORY,
+    TissueType.SPIKE,
   ];
   const totalTissueCells = Math.max(1, simState.totalVisibleCoverage);
 
@@ -223,7 +226,13 @@ export const TelemetryCharts: React.FC<TelemetryChartsProps> = ({ simState }) =>
                         ? latest?.sensor ?? 0
                         : t === TissueType.MUSCLE
                           ? latest?.muscle ?? 0
-                          : latest?.flagella ?? 0;
+                          : t === TissueType.FLAGELLA
+                            ? latest?.flagella ?? 0
+                            : t === TissueType.DIGESTIVE
+                              ? latest?.digestive ?? 0
+                              : t === TissueType.EXCRETORY
+                                ? latest?.excretory ?? 0
+                                : latest?.spike ?? 0;
             const share = (count / totalTissueCells) * 100;
 
             return (

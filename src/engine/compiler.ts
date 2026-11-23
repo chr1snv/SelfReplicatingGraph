@@ -5,6 +5,7 @@ import {
   MAX_MIP_LEVEL,
   MipLayerCompiled,
   MipLevel,
+  NeuralBlueprintConfig,
   TissueType,
   mipDim,
   mipStride,
@@ -21,7 +22,7 @@ const CARDINAL_DELTAS: [number, number][] = [
 function createBaseLayer(blueprint: Uint8Array): MipLayerCompiled {
   const dim = BASE_DIM;
   const tissueGrid = new Uint8Array(blueprint);
-  const lineageGrid = new Uint8Array(dim * dim);
+  const lineageGrid = new Uint16Array(dim * dim);
   const nodeIdGrid = new Int32Array(dim * dim);
   const tissueCounts = createEmptyTissueCounts();
 
@@ -64,7 +65,10 @@ function countBits(mask: number): number {
  * Compiles a 128x128 multi-tissue design image in REVERSE (L0 -> L1 -> L2 -> L3)
  * into a 4-level level-set mipmap pyramid and unified Directive Connectivity Graph.
  */
-export function compileBlueprintToGenome(blueprint: Uint8Array): CompiledGenome {
+export function compileBlueprintToGenome(
+  blueprint: Uint8Array,
+  neuralConfig?: NeuralBlueprintConfig,
+): CompiledGenome {
   const t0 = performance.now();
 
   // 1. Reverse Mipmap Pyramid Construction: Fine (L0) -> Coarse (L3)
@@ -361,5 +365,13 @@ export function compileBlueprintToGenome(blueprint: Uint8Array): CompiledGenome 
     legacySeedNodeId,
     legacyGrid,
     compileTimeMs: performance.now() - t0,
+    neuralConfig: neuralConfig
+      ? {
+          arDecay: [...neuralConfig.arDecay],
+          resGain: [...neuralConfig.resGain],
+          bias: [...neuralConfig.bias],
+          weights: [...neuralConfig.weights],
+        }
+      : undefined,
   };
 }

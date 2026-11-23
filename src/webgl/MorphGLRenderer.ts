@@ -79,6 +79,9 @@ vec3 tissueColor(int t) {
   if (t == 5) return vec3(${TISSUE_RGB_TABLE[TissueType.SENSOR].map((v) => v.toFixed(4)).join(', ')});
   if (t == 6) return vec3(${TISSUE_RGB_TABLE[TissueType.MUSCLE].map((v) => v.toFixed(4)).join(', ')});
   if (t == 7) return vec3(${TISSUE_RGB_TABLE[TissueType.FLAGELLA].map((v) => v.toFixed(4)).join(', ')});
+  if (t == 8) return vec3(${TISSUE_RGB_TABLE[TissueType.DIGESTIVE].map((v) => v.toFixed(4)).join(', ')});
+  if (t == 9) return vec3(${TISSUE_RGB_TABLE[TissueType.EXCRETORY].map((v) => v.toFixed(4)).join(', ')});
+  if (t == 10) return vec3(${TISSUE_RGB_TABLE[TissueType.SPIKE].map((v) => v.toFixed(4)).join(', ')});
   return vec3(0.035, 0.047, 0.071);
 }
 

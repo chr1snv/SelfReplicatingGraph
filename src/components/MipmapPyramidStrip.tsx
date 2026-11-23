@@ -30,6 +30,9 @@ const TISSUE_RGB: Record<TissueType, [number, number, number]> = {
   [TissueType.SENSOR]: hexToRgb(TISSUE_SPECS[TissueType.SENSOR].color),
   [TissueType.MUSCLE]: hexToRgb(TISSUE_SPECS[TissueType.MUSCLE].color),
   [TissueType.FLAGELLA]: hexToRgb(TISSUE_SPECS[TissueType.FLAGELLA].color),
+  [TissueType.DIGESTIVE]: hexToRgb(TISSUE_SPECS[TissueType.DIGESTIVE].color),
+  [TissueType.EXCRETORY]: hexToRgb(TISSUE_SPECS[TissueType.EXCRETORY].color),
+  [TissueType.SPIKE]: hexToRgb(TISSUE_SPECS[TissueType.SPIKE].color),
 };
 
 const MipMiniCanvas: React.FC<{

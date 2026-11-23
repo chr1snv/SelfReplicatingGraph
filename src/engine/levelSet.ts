@@ -105,12 +105,15 @@ export function createEmptyTissueCounts(): Record<TissueType, number> {
     [TissueType.SENSOR]: 0,
     [TissueType.MUSCLE]: 0,
     [TissueType.FLAGELLA]: 0,
+    [TissueType.DIGESTIVE]: 0,
+    [TissueType.EXCRETORY]: 0,
+    [TissueType.SPIKE]: 0,
   };
 }
 
 /**
  * Reverse-downsamples a finer mip level (L - 1) into coarser mip level (L).
- * Preserves thin specialized tissues (Neural, Vascular, Sensor, Muscle, Flagella)
+ * Preserves thin specialized tissues (Neural, Vascular, Sensor, Muscle, Flagella, Digestive, Excretory, Spike)
  * and records multi-tissue lineage masks across 2x2 sub-blocks.
  */
 export function downsampleMipLayer(fineLayer: MipLayerCompiled): MipLayerCompiled {
@@ -120,21 +123,22 @@ export function downsampleMipLayer(fineLayer: MipLayerCompiled): MipLayerCompile
   const fineDim = fineLayer.dim;
 
   const tissueGrid = new Uint8Array(dim * dim);
-  const lineageGrid = new Uint8Array(dim * dim);
+  const lineageGrid = new Uint16Array(dim * dim);
   const nodeIdGrid = new Int32Array(dim * dim);
   const tissueCounts = createEmptyTissueCounts();
 
   let activeCount = 0;
 
-  // Slight priority boost for thin functional structures so sensors, flagella, nerves & vessels survive downsampling
-  const specializedBoost = [0, 0, 0, 0.35, 0.35, 0.55, 0.35, 0.55];
-  const tieBreak = [0, 1, 2, 4, 3, 6, 5, 7];
+  // Priority boost for thin functional structures so specialized organs survive downsampling
+  const specializedBoost = [0, 0, 0, 0.35, 0.35, 0.55, 0.35, 0.55, 0.42, 0.42, 0.58];
+  const tieBreak = [0, 1, 2, 4, 3, 6, 5, 7, 8, 9, 10];
+  const counts = new Int32Array(11);
 
   for (let y = 0; y < dim; y++) {
     for (let x = 0; x < dim; x++) {
       const fx = x * 2;
       const fy = y * 2;
-      const counts = [0, 0, 0, 0, 0, 0, 0, 0];
+      counts.fill(0);
       let lineage = 0;
       let nonEmpty = 0;
 
@@ -162,7 +166,7 @@ export function downsampleMipLayer(fineLayer: MipLayerCompiled): MipLayerCompile
       let bestTissue: TissueType = TissueType.EPIDERMIS;
       let bestScore = -1;
 
-      for (let t = 1; t <= 7; t++) {
+      for (let t = 1; t <= 10; t++) {
         if (counts[t] === 0) continue;
         const score = counts[t] + specializedBoost[t] + tieBreak[t] * 0.01;
         if (score > bestScore) {

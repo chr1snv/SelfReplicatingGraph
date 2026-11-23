@@ -18,6 +18,9 @@ export const TISSUE_RGB_TABLE: Record<TissueType, [number, number, number]> = {
   [TissueType.SENSOR]: hexToRgbNorm(TISSUE_SPECS[TissueType.SENSOR].color),
   [TissueType.MUSCLE]: hexToRgbNorm(TISSUE_SPECS[TissueType.MUSCLE].color),
   [TissueType.FLAGELLA]: hexToRgbNorm(TISSUE_SPECS[TissueType.FLAGELLA].color),
+  [TissueType.DIGESTIVE]: hexToRgbNorm(TISSUE_SPECS[TissueType.DIGESTIVE].color),
+  [TissueType.EXCRETORY]: hexToRgbNorm(TISSUE_SPECS[TissueType.EXCRETORY].color),
+  [TissueType.SPIKE]: hexToRgbNorm(TISSUE_SPECS[TissueType.SPIKE].color),
 };
 
 export function compileShader(
@@ -62,6 +65,38 @@ export function createProgram(
     const log = gl.getProgramInfoLog(prog) ?? 'Unknown link error';
     gl.deleteProgram(prog);
     throw new Error(`WebGL2 program link error: ${log}`);
+  }
+  return prog;
+}
+
+/**
+ * Links a WebGL2 Transform Feedback shader program declaring captured vertex output varyings.
+ */
+export function createTransformFeedbackProgram(
+  gl: WebGL2RenderingContext,
+  vertSource: string,
+  fragSource: string,
+  varyings: string[],
+): WebGLProgram {
+  const vs = compileShader(gl, gl.VERTEX_SHADER, vertSource);
+  const fs = compileShader(gl, gl.FRAGMENT_SHADER, fragSource);
+  const prog = gl.createProgram();
+  if (!prog) {
+    gl.deleteShader(vs);
+    gl.deleteShader(fs);
+    throw new Error('Failed to allocate WebGL2 TF program');
+  }
+  gl.attachShader(prog, vs);
+  gl.attachShader(prog, fs);
+  gl.transformFeedbackVaryings(prog, varyings, gl.INTERLEAVED_ATTRIBS);
+  gl.linkProgram(prog);
+  gl.deleteShader(vs);
+  gl.deleteShader(fs);
+
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    const log = gl.getProgramInfoLog(prog) ?? 'Unknown TF link error';
+    gl.deleteProgram(prog);
+    throw new Error(`WebGL2 TF program link error: ${log}`);
   }
   return prog;
 }

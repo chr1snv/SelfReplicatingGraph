@@ -1,15 +1,100 @@
 import { BASE_DIM, CompiledGenome, TissueType } from '../types/morphogenesis';
 import { compileBlueprintToGenome } from './compiler';
+import { crossoverNeuralConfigs } from './neuralNet';
+
+const MUTATABLE_ORGANS: TissueType[] = [
+  TissueType.SENSOR,
+  TissueType.FLAGELLA,
+  TissueType.DIGESTIVE,
+  TissueType.EXCRETORY,
+  TissueType.SPIKE,
+];
+
+// Pre-allocated zero-GC scratch buffers for connected-component pruning in offspring blueprints
+const GEN_VISITED = new Uint8Array(BASE_DIM * BASE_DIM);
+const GEN_QUEUE = new Int32Array(BASE_DIM * BASE_DIM);
+const GEN_CURR_COMP = new Int32Array(BASE_DIM * BASE_DIM);
+const GEN_BEST_COMP = new Int32Array(BASE_DIM * BASE_DIM);
+
+/**
+ * Retains only the single largest 4-connected tissue component in a 128x128 blueprint.
+ * Because downsampleMipLayer marks any L1/L2/L3 block active whenever >= 1 child L0 pixel
+ * is active, 4-connectivity at L0 guarantees 4-connectivity across all coarser mip levels
+ * and the resulting SoftBodyMesh (zero floating detached cells or void bridges).
+ */
+export function pruneToLargestConnectedComponent(blueprint: Uint8Array): void {
+  const total = BASE_DIM * BASE_DIM;
+  GEN_VISITED.fill(0);
+  let bestCount = 0;
+
+  for (let i = 0; i < total; i++) {
+    if (blueprint[i] === TissueType.EMPTY || GEN_VISITED[i]) continue;
+
+    let qHead = 0;
+    let qTail = 0;
+    let currCount = 0;
+    GEN_VISITED[i] = 1;
+    GEN_QUEUE[qTail++] = i;
+
+    while (qHead < qTail) {
+      const idx = GEN_QUEUE[qHead++];
+      GEN_CURR_COMP[currCount++] = idx;
+      const x = idx % BASE_DIM;
+      const y = (idx / BASE_DIM) | 0;
+
+      if (x > 0) {
+        const n = idx - 1;
+        if (!GEN_VISITED[n] && blueprint[n] !== TissueType.EMPTY) {
+          GEN_VISITED[n] = 1;
+          GEN_QUEUE[qTail++] = n;
+        }
+      }
+      if (x < BASE_DIM - 1) {
+        const n = idx + 1;
+        if (!GEN_VISITED[n] && blueprint[n] !== TissueType.EMPTY) {
+          GEN_VISITED[n] = 1;
+          GEN_QUEUE[qTail++] = n;
+        }
+      }
+      if (y > 0) {
+        const n = idx - BASE_DIM;
+        if (!GEN_VISITED[n] && blueprint[n] !== TissueType.EMPTY) {
+          GEN_VISITED[n] = 1;
+          GEN_QUEUE[qTail++] = n;
+        }
+      }
+      if (y < BASE_DIM - 1) {
+        const n = idx + BASE_DIM;
+        if (!GEN_VISITED[n] && blueprint[n] !== TissueType.EMPTY) {
+          GEN_VISITED[n] = 1;
+          GEN_QUEUE[qTail++] = n;
+        }
+      }
+    }
+
+    if (currCount > bestCount) {
+      bestCount = currCount;
+      GEN_BEST_COMP.set(GEN_CURR_COMP.subarray(0, currCount));
+    }
+  }
+
+  if (bestCount === 0) return;
+
+  // Temporarily mark kept indices in GEN_VISITED (= 2) and clear all smaller islands
+  for (let k = 0; k < bestCount; k++) {
+    GEN_VISITED[GEN_BEST_COMP[k]] = 2;
+  }
+  for (let i = 0; i < total; i++) {
+    if (blueprint[i] !== TissueType.EMPTY && GEN_VISITED[i] !== 2) {
+      blueprint[i] = TissueType.EMPTY;
+    }
+  }
+}
 
 /**
  * Recombines two parents' morphogenesis directive graphs (via their aligned multi-resolution
- * tissue blueprints & L3/L2 organ domains) to synthesize a viable hybrid offspring genome.
- *
- * Uses three complementary biological crossover operators:
- * 1. Centroid-aligned cleavage crossover (anterior/posterior or bilateral split across the body axis)
- * 2. L2 Organ-Module directive mixing (specialized Sensor, Muscle, Flagella, Neural blocks
- *    are inherited as intact functional subtrees from either parent)
- * 3. Epidermal sealing & light somatic mutation so the hybrid body plan forms a cohesive organism.
+ * tissue blueprints & L3/L2 organ domains) plus their AR-ResNet neural controller parameters
+ * to synthesize a single connected viable hybrid offspring genome.
  */
 export function crossoverGenomes(
   parentA: CompiledGenome,
@@ -19,7 +104,6 @@ export function crossoverGenomes(
   const bpB = parentB.blueprint;
   const child = new Uint8Array(BASE_DIM * BASE_DIM);
 
-  // Compute centroids of both blueprints so differently shaped parents align cleanly
   const centroidOf = (bp: Uint8Array) => {
     let sx = 0;
     let sy = 0;
@@ -47,7 +131,6 @@ export function crossoverGenomes(
     return bp[sy * BASE_DIM + sx] as TissueType;
   };
 
-  // Random cleavage plane orientation (horizontal anterior/posterior, vertical bilateral, or diagonal)
   const angle = Math.random() * Math.PI * 2;
   const nx = Math.cos(angle);
   const ny = Math.sin(angle);
@@ -70,32 +153,30 @@ export function crossoverGenomes(
       const bIdx = (y >> 2) * blockDim + (x >> 2);
       const dom = blockDominance[bIdx];
 
-      // Smooth blend zone around cleavage boundary mixes L2 organ blocks
       if (proj > 6) {
         child[y * BASE_DIM + x] = tA !== TissueType.EMPTY ? tA : (dom === 1 ? tB : TissueType.EMPTY);
       } else if (proj < -6) {
         child[y * BASE_DIM + x] = tB !== TissueType.EMPTY ? tB : (dom === 0 ? tA : TissueType.EMPTY);
       } else {
-        // Transition / hybrid recombination zone: union of core + L2 module selection
         if (tA !== TissueType.EMPTY && tB !== TissueType.EMPTY) {
-          // Prioritize specialized tissues from either parent during hybridization
           const specA = tA >= TissueType.NEURAL;
           const specB = tB >= TissueType.NEURAL;
           if (specA && !specB) child[y * BASE_DIM + x] = tA;
           else if (specB && !specA) child[y * BASE_DIM + x] = tB;
           else child[y * BASE_DIM + x] = dom === 0 ? tA : tB;
         } else {
-          child[y * BASE_DIM + x] = dom === 0 ? tA : tB;
+          // Keep bridge tissue along suture line when inside either parent's core silhouette
+          child[y * BASE_DIM + x] = tA !== TissueType.EMPTY ? tA : tB;
         }
       }
     }
   }
 
-  // Light somatic mutation: occasionally sprout or shift a sensor/flagellum cluster along boundary
+  // Light somatic mutation: occasionally sprout a sensor/flagellum/digestive/renal/spike cluster
   if (Math.random() < 0.35) {
     const mx = Math.round(targetC.x + (Math.random() - 0.5) * 32);
     const my = Math.round(targetC.y + (Math.random() - 0.5) * 32);
-    const mutTissue = Math.random() < 0.5 ? TissueType.SENSOR : TissueType.FLAGELLA;
+    const mutTissue = MUTATABLE_ORGANS[Math.floor(Math.random() * MUTATABLE_ORGANS.length)];
     for (let dy = -2; dy <= 2; dy++) {
       for (let dx = -2; dx <= 2; dx++) {
         if (dx * dx + dy * dy > 5) continue;
@@ -109,6 +190,9 @@ export function crossoverGenomes(
       }
     }
   }
+
+  // Prune any disconnected islands so offspring anatomy is strictly 1 single connected body
+  pruneToLargestConnectedComponent(child);
 
   // Ensure outer boundary has protective Epidermis where raw Mesoderm touches void
   const copy = new Uint8Array(child);
@@ -127,5 +211,6 @@ export function crossoverGenomes(
     }
   }
 
-  return compileBlueprintToGenome(child);
+  const hybridNeural = crossoverNeuralConfigs(parentA.neuralConfig, parentB.neuralConfig);
+  return compileBlueprintToGenome(child, hybridNeural);
 }

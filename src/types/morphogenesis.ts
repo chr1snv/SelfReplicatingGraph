@@ -7,6 +7,9 @@ export enum TissueType {
   SENSOR = 5,
   MUSCLE = 6,
   FLAGELLA = 7,
+  DIGESTIVE = 8,
+  EXCRETORY = 9,
+  SPIKE = 10,
 }
 
 export type MipLevel = 0 | 1 | 2 | 3;
@@ -21,6 +24,9 @@ export type BrushTool =
   | 'sensor'
   | 'muscle'
   | 'flagella'
+  | 'digestive'
+  | 'excretory'
+  | 'spike'
   | 'eraser'
   | 'scalpel';
 
@@ -109,6 +115,33 @@ export const TISSUE_SPECS: Record<TissueType, TissueSpec> = {
     glowColor: 'rgba(167, 139, 250, 0.6)',
     borderColor: '#C4B5FD',
   },
+  [TissueType.DIGESTIVE]: {
+    id: TissueType.DIGESTIVE,
+    name: 'Digestive',
+    shortName: 'Digestive',
+    role: 'Enzymatic stomach cells · Breaks down ingested food into vascular ATP',
+    color: '#F97316',
+    glowColor: 'rgba(249, 115, 22, 0.58)',
+    borderColor: '#FB923C',
+  },
+  [TissueType.EXCRETORY]: {
+    id: TissueType.EXCRETORY,
+    name: 'Excretory',
+    shortName: 'Renal',
+    role: 'Waste filtering nephridia · Purges metabolic waste & neutralizes toxins',
+    color: '#14B8A6',
+    glowColor: 'rgba(20, 184, 166, 0.55)',
+    borderColor: '#2DD4BF',
+  },
+  [TissueType.SPIKE]: {
+    id: TissueType.SPIKE,
+    name: 'Chitin Spike',
+    shortName: 'Spike',
+    role: 'Calcified combat spine · Pierces colliding rivals to inflict ATP & rupture damage',
+    color: '#E2E8F0',
+    glowColor: 'rgba(244, 63, 94, 0.6)',
+    borderColor: '#FB7185',
+  },
 };
 
 export const ACTIVE_TISSUE_TYPES: TissueType[] = [
@@ -119,6 +152,9 @@ export const ACTIVE_TISSUE_TYPES: TissueType[] = [
   TissueType.SENSOR,
   TissueType.MUSCLE,
   TissueType.FLAGELLA,
+  TissueType.DIGESTIVE,
+  TissueType.EXCRETORY,
+  TissueType.SPIKE,
 ];
 
 export const BASE_DIM = 128;
@@ -151,12 +187,19 @@ export interface DirectiveNode {
   bridgeTargetIds: number[];
 }
 
+export interface NeuralBlueprintConfig {
+  arDecay: number[]; // length 6
+  resGain: number[]; // length 6
+  bias: number[]; // length 6
+  weights: number[]; // length 36
+}
+
 export interface MipLayerCompiled {
   level: MipLevel;
   dim: number;
   stride: number;
   tissueGrid: Uint8Array;
-  lineageGrid: Uint8Array;
+  lineageGrid: Uint16Array;
   phiGrid: Float32Array;
   nodeIdGrid: Int32Array;
   activeCount: number;
@@ -174,6 +217,7 @@ export interface CompiledGenome {
   legacySeedNodeId: number;
   legacyGrid: Int32Array;
   compileTimeMs: number;
+  neuralConfig?: NeuralBlueprintConfig;
 }
 
 export interface SimLayerState {
@@ -215,6 +259,9 @@ export interface TelemetryPoint {
   sensor: number;
   muscle: number;
   flagella: number;
+  digestive: number;
+  excretory: number;
+  spike: number;
 }
 
 export interface SimState {
@@ -305,6 +352,12 @@ export interface SoftCell {
   epidermisWeight: number;
   mesodermWeight: number;
   vascularWeight: number;
+  digestiveWeight: number;
+  excretoryWeight: number;
+  spikeWeight: number;
+  // Tissue connectivity / AoE functional supply factors [0.35..1.0]
+  vascularSupply: number;
+  neuralCoupling: number;
   // Dynamic physics state
   activation: number;
   thrustDirX: number;
@@ -333,6 +386,11 @@ export interface SoftBodyMesh {
   angularVelocity: number;
   totalArea: number;
   targetTotalArea: number;
+  vascularEfficiency: number;
+  neuralEfficiency: number;
+  digestiveEfficiency: number;
+  excretoryEfficiency: number;
+  spikeCount: number;
   lastSyncedTick: number;
   lastSyncedCount: number;
 }
@@ -357,13 +415,20 @@ export interface NeuralNetState {
   brakeOut: number; // [0..1] mutually exclusive opposing brake throttle
   steerOut: number; // [-1..1] continuous directional steering torque
   gaitOut: number; // [0.25..1.25] smooth muscle CPG amplitude factor
+  aggressionOut: number; // [0..1] auto-regressive combat aggression state
+  isAggressive: boolean; // gates active extension & localized scalpel strike of SPIKE cells
   mode: LocomotionMode;
   atFoodTicks: number;
 }
 
+export type OrganismMood = 'foraging' | 'amorous' | 'threatened' | 'exhausted' | 'aggressive';
+export type WorldFaction = 'neutral' | 'player' | 'ai';
+export type BiomeId = 'pond' | 'tidepool' | 'leaf_droplet' | 'frozen_ice' | 'cave';
+
 export interface WorldOrganism {
   id: number;
   colonyId: number; // Shared organism ID across disconnected fragments for reconnection
+  faction: WorldFaction;
   isFragment: boolean;
   fragmentBirthCellCount: number;
   fragmentTicks: number;
@@ -376,10 +441,15 @@ export interface WorldOrganism {
   params: SimParams;
   mesh: SoftBodyMesh;
   energyReserve: number; // 0..100 metabolic world energy
+  wasteLevel: number; // 0..100 metabolic waste cleared by EXCRETORY tissue
   lastMetabolicDrain: number; // ATP drained per tick by muscles & flagella
   steerBias: number; // -1..1 from Gradient Sensors -> AR-ResNet Neural Controller
   sensorMagnitude: number; // strength of detected chemical gradient
   neuralNet: NeuralNetState; // 6-neuron Auto-Regressive Residual Neural Network
+  mood: OrganismMood;
+  scentSignature: number; // hue/chemical signature [0..1] derived from lineage & mood
+  ignoredPelletUntil: Map<number, number>; // pelletId -> worldTick expiry after feeding
+  combatScore: number;
   musclePhaseTime: number;
   speed: number;
   ageTicks: number;
@@ -395,6 +465,47 @@ export interface FoodPellet {
   y: number;
   radius: number;
   amount: number;
+  maxAmount: number;
+  isPhotosynthetic: boolean;
+  growthRate: number;
+}
+
+export interface SunZone {
+  x: number;
+  y: number;
+  radius: number;
+  intensity: number; // 0..1
+}
+
+export interface HeartEffect {
+  id: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  age: number;
+  maxAge: number;
+  scale: number;
+}
+
+export interface WorldSoundEvent {
+  type: 'eat' | 'mate' | 'split' | 'rupture' | 'spawn' | 'reconnect' | 'breach' | 'victory';
+  intensity: number;
+}
+
+export interface BattleState {
+  enabled: boolean;
+  barrierActive: boolean;
+  barrierX: number;
+  barrierHealth: number;
+  barrierMaxHealth: number;
+  breachThreshold: number; // Colony strength required to shatter wall
+  playerStrength: number;
+  aiStrength: number;
+  playerCount: number;
+  aiCount: number;
+  winner: 'player' | 'ai' | null;
+  aiNextActionTick: number;
 }
 
 export interface WorldParams {
@@ -407,22 +518,30 @@ export interface WorldParams {
   scentDiffusion: number; // chemical diffusion rate
   growthRate: number; // morphogenesis ticks per N world frames
   metabolismRate: number; // energy burn multiplier for muscles & flagella
+  sunlightLevel: number; // ambient + solar photosynthesis drive
   autoMating: boolean;
   maxOrganisms: number;
 }
 
 export interface WorldState {
+  biomeId: BiomeId;
   width: number;
   height: number;
   chemCols: number;
   chemRows: number;
   foodField: Float32Array; // nutrient/food scent gradient
-  scentField: Float32Array; // organism pheromone trail
+  scentField: Float32Array; // organism mating/identity pheromone gradient
+  moodField: Float32Array; // organism health/mood signal (-1 threat/exhausted .. +1 amorous)
   toxinField: Float32Array; // repellent gradient
   pellets: FoodPellet[];
+  sunZones: SunZone[];
+  hearts: HeartEffect[];
+  soundEvents: WorldSoundEvent[];
   organisms: WorldOrganism[];
+  battle: BattleState;
   nextOrgId: number;
   nextPelletId: number;
+  nextHeartId: number;
   worldTick: number;
   totalBirths: number;
   deathsStarved: number;
@@ -431,4 +550,3 @@ export interface WorldState {
   totalReconnections: number;
   totalSplits: number;
 }
-

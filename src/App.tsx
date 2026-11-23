@@ -2,45 +2,48 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Award,
   CheckCircle2,
-  Droplets,
-  Eraser,
-  FlaskConical,
-  Hand,
-  MousePointer2,
+  Lock,
+  Music,
   Paintbrush,
   Pause,
   Play,
-  PlusCircle,
   RotateCcw,
-  Scissors,
   SlidersHorizontal,
   StepForward,
+  Swords,
   Target,
-  Trash2,
-  Upload,
+  Volume2,
+  VolumeX,
   Wrench,
   X,
 } from 'lucide-react';
 import { BlueprintCanvas } from './components/BlueprintCanvas';
+import { DesignerControlsPanel } from './components/DesignerControlsPanel';
 import { DirectiveGraph3D } from './components/DirectiveGraph3D';
 import { MipmapPyramidStrip } from './components/MipmapPyramidStrip';
 import { MissionsPanel } from './components/MissionsPanel';
 import { OrganismSideTab } from './components/OrganismSideTab';
+import { ResNetEditorPanel } from './components/ResNetEditorPanel';
 import { SimulationCanvas } from './components/SimulationCanvas';
 import { TelemetryCharts } from './components/TelemetryCharts';
 import { WorldCanvas } from './components/WorldCanvas';
+import { WorldControlsPanel } from './components/WorldControlsPanel';
+import { BIOMES, getBiomeDef } from './engine/biomes';
 import { compileBlueprintToGenome } from './engine/compiler';
+import { createDefaultNeuralConfig, extractNeuralConfigFromState } from './engine/neuralNet';
 import { ORGANISM_PRESETS } from './engine/presets';
 import {
   ProgressionEntryDef,
   ProgressionEvaluatedItem,
   ProgressionTracker,
   createDefaultTracker,
+  isBiomeUnlocked,
   loadProgressionTracker,
   saveProgressionTracker,
   updateTrackerAndEvaluate,
 } from './engine/progression';
 import { createSimState, injureSimulation, stepSimulation } from './engine/simulator';
+import { soundEngine } from './engine/soundEngine';
 import { syncOrganismMeshFromSimState } from './engine/softBodyPhysics';
 import {
   DEFAULT_WORLD_PARAMS,
@@ -49,17 +52,20 @@ import {
   injureWorldOrganism,
   mateOrganisms,
   pokeWorldMesh,
+  spawnOrganismFromFood,
   spawnOrganismInWorld,
   stepWorldSimulation,
 } from './engine/worldSim';
 import {
   ACTIVE_TISSUE_TYPES,
   BASE_DIM,
+  BiomeId,
   BrushTool,
   CompiledGenome,
   GrowthMode,
   InspectedCell,
   MipLevel,
+  NeuralBlueprintConfig,
   SimParams,
   SimState,
   TISSUE_SPECS,
@@ -88,13 +94,25 @@ export default function App() {
   const [view, setView] = useState<WorkspaceView>('world');
   const [mobileSheet, setMobileSheet] = useState<MobileSheet>('none');
 
+  // Biome, Battle Mode & Audio state
+  const [activeBiomeId, setActiveBiomeId] = useState<BiomeId>('pond');
+  const [battleMode, setBattleMode] = useState<boolean>(false);
+  const [sfxEnabled, setSfxEnabled] = useState<boolean>(true);
+  const [musicEnabled, setMusicEnabled] = useState<boolean>(false);
+
   // Designer / Standalone Morphogenesis state
   const [selectedPresetId, setSelectedPresetId] = useState<string>(ORGANISM_PRESETS[0].id);
+  const [neuralConfig, setNeuralConfig] = useState<NeuralBlueprintConfig>(() =>
+    createDefaultNeuralConfig(),
+  );
   const [blueprint, setBlueprint] = useState<Uint8Array>(() =>
     ORGANISM_PRESETS[0].generate(BASE_DIM),
   );
   const [genome, setGenome] = useState<CompiledGenome>(() =>
-    compileBlueprintToGenome(ORGANISM_PRESETS[0].generate(BASE_DIM)),
+    compileBlueprintToGenome(
+      ORGANISM_PRESETS[0].generate(BASE_DIM),
+      createDefaultNeuralConfig(),
+    ),
   );
   const [simParams, setSimParams] = useState<SimParams>(DEFAULT_SIM_PARAMS);
   const [simState, setSimState] = useState<SimState>(() =>
@@ -112,14 +130,21 @@ export default function App() {
   const [showTargetGhost, setShowTargetGhost] = useState<boolean>(false);
   const [inspectedCell, setInspectedCell] = useState<InspectedCell | null>(null);
 
-  // World Simulation state
-  const [worldState, setWorldState] = useState<WorldState>(() =>
-    createInitialWorld(DEFAULT_SIM_PARAMS),
-  );
+  // World Simulation state stored in a mutable ref so 30Hz physics never triggers React DOM diffing
+  const worldRef = useRef<WorldState>(null!);
+  if (!worldRef.current) {
+    worldRef.current = createInitialWorld(DEFAULT_SIM_PARAMS, 'pond', false);
+  }
+  const [, setHudVersion] = useState<number>(0);
+  const [renderEpoch, setRenderEpoch] = useState<number>(0);
+  const hudTickCounterRef = useRef<number>(0);
+  const prevBarrierActiveRef = useRef<boolean>(worldRef.current.battle.barrierActive);
+  const prevBattleWinnerRef = useRef<WorldState['battle']['winner']>(worldRef.current.battle.winner);
+
   const [worldParams, setWorldParams] = useState<WorldParams>(DEFAULT_WORLD_PARAMS);
   const [worldPlaying, setWorldPlaying] = useState<boolean>(true);
   const [worldTool, setWorldTool] = useState<WorldTool>('select');
-  const [selectedOrgId, setSelectedOrgId] = useState<number | null>(1);
+  const [selectedOrgId, setSelectedOrgId] = useState<number | null>(null);
   const [showChemFields, setShowChemFields] = useState<boolean>(true);
   const [showGradientArrows, setShowGradientArrows] = useState<boolean>(false);
   const [showPhysicsMesh, setShowPhysicsMesh] = useState<boolean>(false);
@@ -130,7 +155,7 @@ export default function App() {
   const [progressionItems, setProgressionItems] = useState<ProgressionEvaluatedItem[]>(() => {
     const initial = updateTrackerAndEvaluate(
       trackerRef.current,
-      worldState,
+      worldRef.current,
       simState,
       genome,
       false,
@@ -139,6 +164,18 @@ export default function App() {
   });
   const [toastItem, setToastItem] = useState<ProgressionEntryDef | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+  const [spawnNotice, setSpawnNotice] = useState<string | null>(null);
+  const spawnNoticeTimerRef = useRef<number | null>(null);
+
+  const showSpawnNotice = useCallback((msg: string) => {
+    setSpawnNotice(msg);
+    if (spawnNoticeTimerRef.current !== null) {
+      window.clearTimeout(spawnNoticeTimerRef.current);
+    }
+    spawnNoticeTimerRef.current = window.setTimeout(() => {
+      setSpawnNotice(null);
+    }, 3600);
+  }, []);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -152,12 +189,35 @@ export default function App() {
   const blueprintRef = useRef(blueprint);
   blueprintRef.current = blueprint;
 
-  const worldRef = useRef(worldState);
-  worldRef.current = worldState;
   const worldParamsRef = useRef(worldParams);
   worldParamsRef.current = worldParams;
   const selectedPresetIdRef = useRef(selectedPresetId);
   selectedPresetIdRef.current = selectedPresetId;
+  const neuralConfigRef = useRef(neuralConfig);
+  neuralConfigRef.current = neuralConfig;
+  const selectedOrgIdRef = useRef(selectedOrgId);
+  selectedOrgIdRef.current = selectedOrgId;
+
+  const syncAdaptiveSound = useCallback((w: WorldState) => {
+    let totalFood = 0;
+    for (let i = 0; i < w.pellets.length; i++) {
+      totalFood += w.pellets[i].amount;
+    }
+    let amorousCount = 0;
+    for (let i = 0; i < w.organisms.length; i++) {
+      if (w.organisms[i].mood === 'amorous') {
+        amorousCount++;
+      }
+    }
+    soundEngine.updateAdaptiveContext({
+      biomeId: w.biomeId,
+      organismCount: w.organisms.length,
+      totalFood,
+      amorousCount,
+      battleEnabled: w.battle.enabled,
+      barrierActive: w.battle.barrierActive,
+    });
+  }, []);
 
   const triggerProgressionEval = useCallback(() => {
     const { items, newlyUnlocked } = updateTrackerAndEvaluate(
@@ -180,8 +240,12 @@ export default function App() {
   }, []);
 
   const compileAndResetDesigner = useCallback(
-    (nextBlueprint: Uint8Array, nextParams: SimParams = simParamsRef.current) => {
-      const compiled = compileBlueprintToGenome(nextBlueprint);
+    (
+      nextBlueprint: Uint8Array,
+      nextParams: SimParams = simParamsRef.current,
+      nextNeuralConfig: NeuralBlueprintConfig = neuralConfigRef.current,
+    ) => {
+      const compiled = compileBlueprintToGenome(nextBlueprint, nextNeuralConfig);
       const freshSim = createSimState(compiled, nextParams);
       setGenome(compiled);
       setSimState(freshSim);
@@ -191,36 +255,88 @@ export default function App() {
     [],
   );
 
-  // World Ecosystem 30Hz physics + morphogenesis loop
+  const handleNeuralConfigChange = useCallback(
+    (nextCfg: NeuralBlueprintConfig) => {
+      setNeuralConfig(nextCfg);
+      neuralConfigRef.current = nextCfg;
+      const recompiled = compileBlueprintToGenome(blueprintRef.current, nextCfg);
+      setGenome(recompiled);
+      genomeRef.current = recompiled;
+      setSpawnSourceId('designer');
+    },
+    [],
+  );
+
+  // Sync audio toggles & initial biome adaptive music profile
   useEffect(() => {
-    if (view !== 'world' || !worldPlaying) return;
-    let rafId = 0;
-    let lastTime = 0;
-    let evalCounter = 0;
-    const stepMs = 30;
+    soundEngine.setSfxEnabled(sfxEnabled);
+  }, [sfxEnabled]);
 
-    const loop = (ts: number) => {
-      rafId = requestAnimationFrame(loop);
-      if (ts - lastTime < stepMs) return;
-      lastTime = ts;
+  useEffect(() => {
+    soundEngine.setMusicEnabled(musicEnabled);
+    syncAdaptiveSound(worldRef.current);
+  }, [musicEnabled, syncAdaptiveSound]);
 
+  useEffect(() => {
+    soundEngine.setBattleMode(battleMode);
+    syncAdaptiveSound(worldRef.current);
+  }, [battleMode, syncAdaptiveSound]);
+
+  const world = worldRef.current;
+  const spawnLockedByBreach = world.battle.enabled && !world.battle.barrierActive;
+
+  // If the battle barrier breaks while spawn tool is active, revert tool to Select cleanly
+  useEffect(() => {
+    if (spawnLockedByBreach && worldTool === 'spawn') {
+      setWorldTool('select');
+    }
+  }, [spawnLockedByBreach, worldTool]);
+
+  const bumpWorldVisuals = useCallback(
+    (runProgression = false) => {
       const w = worldRef.current;
-      stepWorldSimulation(w, worldParamsRef.current, simParamsRef.current);
-      setWorldState({
-        ...w,
-        organisms: [...w.organisms],
-        pellets: [...w.pellets],
-      });
-
-      evalCounter++;
-      if (evalCounter % 8 === 0) {
+      prevBarrierActiveRef.current = w.battle.barrierActive;
+      prevBattleWinnerRef.current = w.battle.winner;
+      setRenderEpoch((e) => e + 1);
+      setHudVersion((v) => v + 1);
+      if (runProgression) {
         triggerProgressionEval();
       }
-    };
+    },
+    [triggerProgressionEval],
+  );
 
-    rafId = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(rafId);
-  }, [view, worldPlaying, triggerProgressionEval]);
+  // Invoked by WorldCanvas after each 30Hz physics tick; throttles React HUD sync to ~4 Hz
+  const handleWorldSimulationTicked = useCallback(() => {
+    const w = worldRef.current;
+    if (w.soundEvents.length > 0) {
+      soundEngine.playEvents(w.soundEvents);
+      w.soundEvents.length = 0;
+    }
+
+    hudTickCounterRef.current += 1;
+    if (hudTickCounterRef.current % 4 === 0) {
+      syncAdaptiveSound(w);
+    }
+
+    const barrierFlipped = w.battle.barrierActive !== prevBarrierActiveRef.current;
+    const winnerChanged = w.battle.winner !== prevBattleWinnerRef.current;
+    const inspectedMissing =
+      selectedOrgIdRef.current !== null &&
+      !w.organisms.some((o) => o.id === selectedOrgIdRef.current);
+
+    if (
+      barrierFlipped ||
+      winnerChanged ||
+      inspectedMissing ||
+      hudTickCounterRef.current % 8 === 0
+    ) {
+      prevBarrierActiveRef.current = w.battle.barrierActive;
+      prevBattleWinnerRef.current = w.battle.winner;
+      setHudVersion((v) => v + 1);
+      triggerProgressionEval();
+    }
+  }, [syncAdaptiveSound, triggerProgressionEval]);
 
   // Designer Standalone Simulation loop
   useEffect(() => {
@@ -243,15 +359,46 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [view, designerPlaying, designerTps, triggerProgressionEval]);
 
-  const selectedOrganism = useMemo(
-    () => worldState.organisms.find((o) => o.id === selectedOrgId) ?? null,
-    [worldState.organisms, selectedOrgId],
-  );
+  const selectedOrganism =
+    selectedOrgId !== null ? world.organisms.find((o) => o.id === selectedOrgId) ?? null : null;
+
+  let canMateSelected = false;
+  if (!world.battle.enabled) {
+    canMateSelected = world.organisms.length >= 2;
+  } else {
+    let playerOrgCount = 0;
+    for (let i = 0; i < world.organisms.length; i++) {
+      if (world.organisms[i].faction === 'player') {
+        playerOrgCount++;
+        if (playerOrgCount >= 2) {
+          canMateSelected = true;
+          break;
+        }
+      }
+    }
+  }
 
   const completedCount = useMemo(
     () => progressionItems.filter((i) => i.completed).length,
     [progressionItems],
   );
+
+  const activeBiomeDef = useMemo(() => getBiomeDef(activeBiomeId), [activeBiomeId]);
+
+  const switchBiomeOrMode = (nextBiome: BiomeId, nextBattle: boolean) => {
+    setActiveBiomeId(nextBiome);
+    setBattleMode(nextBattle);
+    const fresh = createInitialWorld(simParamsRef.current, nextBiome, nextBattle);
+    worldRef.current = fresh;
+    hudTickCounterRef.current = 0;
+    setSelectedOrgId(null);
+    setMobileSheet('none');
+    setSpawnNotice(null);
+    setWorldPlaying(true);
+    syncAdaptiveSound(fresh);
+    soundEngine.triggerUiSound('spawn');
+    bumpWorldVisuals(true);
+  };
 
   // World Actions
   const getBlueprintForSpawn = useCallback((): {
@@ -278,70 +425,104 @@ export default function App() {
   const handleSpawnAt = useCallback(
     (x: number, y: number) => {
       const w = worldRef.current;
+      if (w.battle.enabled && !w.battle.barrierActive) {
+        showSpawnNotice('Spawning is disabled once the battle containment barrier has broken.');
+        return;
+      }
       const src = getBlueprintForSpawn();
-      const org = spawnOrganismInWorld(
+      const faction = w.battle.enabled ? 'player' : 'neutral';
+      const res = spawnOrganismFromFood(
         w,
         src.genome,
         src.name,
         src.presetId,
         simParamsRef.current,
+        faction,
         x,
         y,
-        Math.random() * Math.PI * 2 - Math.PI,
-        1,
+        2,
       );
-      setSelectedOrgId(org.id);
-      setWorldState({ ...w, organisms: [...w.organisms] });
-      triggerProgressionEval();
+      if (!res.organism) {
+        showSpawnNotice(
+          res.reason === 'barrier_broken'
+            ? 'Spawning is disabled once the battle containment barrier has broken.'
+            : 'No food pellets available on your side to fuel spawning.',
+        );
+        return;
+      }
+      setSpawnNotice(null);
+      syncAdaptiveSound(w);
+      soundEngine.triggerUiSound('spawn');
+      bumpWorldVisuals(true);
     },
-    [getBlueprintForSpawn, triggerProgressionEval],
+    [getBlueprintForSpawn, showSpawnNotice, syncAdaptiveSound, bumpWorldVisuals],
   );
 
   const handlePrimarySpawnButton = () => {
+    const w = worldRef.current;
+    if (w.battle.enabled && !w.battle.barrierActive) {
+      showSpawnNotice('Spawning is disabled once the battle containment barrier has broken.');
+      return;
+    }
+    const faction = w.battle.enabled ? 'player' : 'neutral';
+
     if (view === 'designer') {
-      const w = worldRef.current;
       const name =
         selectedPresetId === 'custom'
           ? 'Custom Organism'
           : ORGANISM_PRESETS.find((p) => p.id === selectedPresetId)?.name ?? 'Custom Organism';
-      const org = spawnOrganismInWorld(
+      const res = spawnOrganismFromFood(
         w,
         genomeRef.current,
         name,
         selectedPresetId,
         simParamsRef.current,
-        280 + Math.random() * 720,
-        160 + Math.random() * 480,
-        Math.random() * Math.PI * 2 - Math.PI,
+        faction,
+        undefined,
+        undefined,
         2,
       );
-      setSelectedOrgId(org.id);
-      setWorldState({ ...w, organisms: [...w.organisms] });
       setView('world');
       setMobileSheet('none');
       setWorldPlaying(true);
-      triggerProgressionEval();
+      if (!res.organism) {
+        showSpawnNotice(
+          res.reason === 'barrier_broken'
+            ? 'Spawning is disabled once the battle containment barrier has broken.'
+            : 'No food pellets available on your side to fuel spawning.',
+        );
+        return;
+      }
+      setSpawnNotice(null);
     } else {
-      const w = worldRef.current;
       const src = getBlueprintForSpawn();
-      const org = spawnOrganismInWorld(
+      const res = spawnOrganismFromFood(
         w,
         src.genome,
         src.name,
         src.presetId,
         simParamsRef.current,
-        200 + Math.random() * 880,
-        140 + Math.random() * 520,
-        Math.random() * Math.PI * 2 - Math.PI,
-        1,
+        faction,
+        undefined,
+        undefined,
+        2,
       );
-      setSelectedOrgId(org.id);
-      setWorldState({ ...w, organisms: [...w.organisms] });
+      if (!res.organism) {
+        showSpawnNotice(
+          res.reason === 'barrier_broken'
+            ? 'Spawning is disabled once the battle containment barrier has broken.'
+            : 'No food pellets available on your side to fuel spawning.',
+        );
+        return;
+      }
+      setSpawnNotice(null);
       if (view === 'missions') {
         setView('world');
       }
-      triggerProgressionEval();
     }
+    syncAdaptiveSound(w);
+    soundEngine.triggerUiSound('spawn');
+    bumpWorldVisuals(true);
   };
 
   const handleDropChemical = useCallback(
@@ -353,37 +534,40 @@ export default function App() {
       } else {
         depositChemical(w.toxinField, x, y, 0.42, 3);
       }
-      setWorldState({ ...w });
+      setRenderEpoch((e) => e + 1);
     },
     [],
   );
 
   const handlePoke = useCallback((x: number, y: number, dvx: number, dvy: number) => {
     const w = worldRef.current;
-    pokeWorldMesh(w, x, y, dvx, dvy, 38);
+    pokeWorldMesh(w, x, y, dvx, dvy, 38, w.battle.enabled);
     trackerRef.current.pokes += 1;
-    setWorldState({ ...w });
+    setRenderEpoch((e) => e + 1);
   }, []);
 
   const handleInjureWorld = useCallback(
     (x: number, y: number) => {
       const w = worldRef.current;
-      if (injureWorldOrganism(w, x, y, 18)) {
+      if (injureWorldOrganism(w, x, y, 18, w.battle.enabled)) {
         trackerRef.current.scalpelHits += 1;
         saveProgressionTracker(trackerRef.current);
-        setWorldState({ ...w, organisms: [...w.organisms] });
-        triggerProgressionEval();
+        soundEngine.triggerUiSound('rupture');
+        bumpWorldVisuals(true);
       }
     },
-    [triggerProgressionEval],
+    [bumpWorldVisuals],
   );
 
   // Per-organism Side Tab actions
   const handleEditOrganismInDesigner = (org: WorldOrganism) => {
     setSelectedPresetId(org.presetId);
     const bp = new Uint8Array(org.genome.blueprint);
+    const extractedCfg = org.genome.neuralConfig ?? extractNeuralConfigFromState(org.neuralNet);
+    setNeuralConfig(extractedCfg);
+    neuralConfigRef.current = extractedCfg;
     setBlueprint(bp);
-    compileAndResetDesigner(bp, org.params);
+    compileAndResetDesigner(bp, org.params, extractedCfg);
     setSpawnSourceId('designer');
     setMobileSheet('none');
     setView('designer');
@@ -391,20 +575,34 @@ export default function App() {
 
   const handleCloneOrganism = (org: WorldOrganism) => {
     const w = worldRef.current;
+    if (org.energyReserve < 36) {
+      showSpawnNotice('Organism needs at least 36% ATP to divide cleanly without free energy.');
+      return;
+    }
+    const maxX = w.battle.enabled && org.faction === 'player' ? w.battle.barrierX - 42 : w.width - 70;
+    const minX = w.battle.enabled && org.faction === 'ai' ? w.battle.barrierX + 42 : 70;
+    const daughterEnergy = org.energyReserve * 0.48;
+    org.energyReserve = org.energyReserve * 0.52;
+
     const cloned = spawnOrganismInWorld(
       w,
       org.genome,
       org.name,
       org.presetId,
       org.params,
-      Math.min(w.width - 70, Math.max(70, org.mesh.comX + 65)),
+      Math.min(maxX, Math.max(minX, org.mesh.comX + 65)),
       Math.min(w.height - 70, Math.max(70, org.mesh.comY + 45)),
       org.mesh.headingAngle + 0.5,
       1,
+      org.generation,
+      org.parentIds,
+      undefined,
+      org.faction,
+      daughterEnergy,
     );
     setSelectedOrgId(cloned.id);
-    setWorldState({ ...w, organisms: [...w.organisms] });
-    triggerProgressionEval();
+    soundEngine.triggerUiSound('spawn');
+    bumpWorldVisuals(true);
   };
 
   const handleResetOrganismSeed = (orgId: number) => {
@@ -414,19 +612,20 @@ export default function App() {
     org.simState = createSimState(org.genome, org.params);
     org.mesh.lastSyncedTick = -1;
     syncOrganismMeshFromSimState(org.mesh, org.simState, org.genome);
-    setWorldState({ ...w, organisms: [...w.organisms] });
+    bumpWorldVisuals(false);
   };
 
   const handleRemoveOrganism = (orgId: number) => {
     const w = worldRef.current;
     w.organisms = w.organisms.filter((o) => o.id !== orgId);
     if (selectedOrgId === orgId) {
-      setSelectedOrgId(w.organisms[0]?.id ?? null);
+      const next = w.organisms.find((o) => (!w.battle.enabled || o.faction === 'player'));
+      setSelectedOrgId(next?.id ?? null);
       if (mobileSheet === 'inspector') {
         setMobileSheet('none');
       }
     }
-    setWorldState({ ...w, organisms: [...w.organisms] });
+    bumpWorldVisuals(false);
   };
 
   const handleInjureOrganismCell = (orgId: number, px: number, py: number) => {
@@ -437,13 +636,15 @@ export default function App() {
     syncOrganismMeshFromSimState(org.mesh, org.simState, org.genome);
     trackerRef.current.scalpelHits += 1;
     saveProgressionTracker(trackerRef.current);
-    setWorldState({ ...w, organisms: [...w.organisms] });
-    triggerProgressionEval();
+    soundEngine.triggerUiSound('rupture');
+    bumpWorldVisuals(true);
   };
 
   const handleMateOrganism = (org: WorldOrganism) => {
     const w = worldRef.current;
-    const candidates = w.organisms.filter((o) => o.id !== org.id);
+    const candidates = w.organisms.filter(
+      (o) => o.id !== org.id && (!w.battle.enabled || o.faction === org.faction),
+    );
     if (candidates.length === 0) return;
 
     let best = candidates[0];
@@ -459,11 +660,14 @@ export default function App() {
     }
 
     const baby = mateOrganisms(w, org, best, simParamsRef.current);
+    if (w.soundEvents.length > 0) {
+      soundEngine.playEvents(w.soundEvents);
+      w.soundEvents.length = 0;
+    }
     trackerRef.current.manualMatings += 1;
     saveProgressionTracker(trackerRef.current);
     setSelectedOrgId(baby.id);
-    setWorldState({ ...w, organisms: [...w.organisms] });
-    triggerProgressionEval();
+    bumpWorldVisuals(true);
   };
 
   // Designer Handlers
@@ -582,8 +786,14 @@ export default function App() {
         const minC = Math.min(r, g, b);
         const sat = maxC > 0 ? (maxC - minC) / maxC : 0;
 
-        if (sat < 0.22) {
+        if (sat < 0.18 && lum > 185) {
+          nextBp[i] = TissueType.SPIKE;
+        } else if (sat < 0.22) {
           nextBp[i] = TissueType.MESODERM;
+        } else if (r > 185 && g > 85 && g < 165 && b < 90) {
+          nextBp[i] = TissueType.DIGESTIVE;
+        } else if (g > 140 && b > 140 && r < 95) {
+          nextBp[i] = TissueType.EXCRETORY;
         } else if (r > g * 1.25 && b > g * 1.2) {
           nextBp[i] = TissueType.MUSCLE;
         } else if (r > g * 1.35 && r > b * 1.35) {
@@ -620,28 +830,10 @@ export default function App() {
     trackerRef.current = createDefaultTracker();
     saveProgressionTracker(trackerRef.current);
     triggerProgressionEval();
+    if (!isBiomeUnlocked(activeBiomeId, progressionItems)) {
+      switchBiomeOrMode('pond', battleMode);
+    }
   };
-
-  const brushTools: Array<{ id: BrushTool; label: string; color?: string; icon?: React.ReactNode }> = [
-    { id: 'epidermis', label: 'Epidermis', color: TISSUE_SPECS[TissueType.EPIDERMIS].color },
-    { id: 'mesoderm', label: 'Mesoderm', color: TISSUE_SPECS[TissueType.MESODERM].color },
-    { id: 'vascular', label: 'Vascular', color: TISSUE_SPECS[TissueType.VASCULAR].color },
-    { id: 'neural', label: 'Neural', color: TISSUE_SPECS[TissueType.NEURAL].color },
-    { id: 'sensor', label: 'Sensor', color: TISSUE_SPECS[TissueType.SENSOR].color },
-    { id: 'muscle', label: 'Muscle', color: TISSUE_SPECS[TissueType.MUSCLE].color },
-    { id: 'flagella', label: 'Flagella', color: TISSUE_SPECS[TissueType.FLAGELLA].color },
-    { id: 'eraser', label: 'Eraser', icon: <Eraser className="h-3.5 w-3.5" /> },
-    { id: 'scalpel', label: 'Scalpel', icon: <Scissors className="h-3.5 w-3.5 text-rose-400" /> },
-  ];
-
-  const worldTools: Array<{ id: WorldTool; label: string; icon: React.ReactNode }> = [
-    { id: 'select', label: 'Select', icon: <MousePointer2 className="h-3.5 w-3.5" /> },
-    { id: 'poke', label: 'Squish / Drag', icon: <Hand className="h-3.5 w-3.5" /> },
-    { id: 'food', label: 'Drop Scent', icon: <Droplets className="h-3.5 w-3.5 text-emerald-400" /> },
-    { id: 'toxin', label: 'Drop Toxin', icon: <FlaskConical className="h-3.5 w-3.5 text-rose-400" /> },
-    { id: 'spawn', label: 'Spawn Click', icon: <PlusCircle className="h-3.5 w-3.5 text-cyan-400" /> },
-    { id: 'scalpel', label: 'Scalpel', icon: <Scissors className="h-3.5 w-3.5 text-rose-400" /> },
-  ];
 
   const phaseLabel = useMemo(() => {
     if (simParams.growthMode === 'legacy') {
@@ -664,543 +856,6 @@ export default function App() {
         return 'Phase 4 · L0 Full Cellular Resolution completing specialized tissues';
     }
   }, [simParams.growthMode, simState.activeWaveLevel, simState.layers, genome.layers]);
-
-  // Reusable inner control blocks (shared cleanly between Desktop sidebars & Mobile bottom sheets)
-  const renderWorldToolsControls = () => (
-    <div className="space-y-4">
-      <section className="space-y-2.5">
-        <h2 className="text-xs font-semibold tracking-wide text-slate-300">World Tools</h2>
-        <div className="grid grid-cols-2 gap-1.5">
-          {worldTools.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => {
-                setWorldTool(t.id);
-                if (mobileSheet === 'tools') setMobileSheet('none');
-              }}
-              className={`flex min-h-[44px] lg:min-h-0 items-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs font-medium transition-colors whitespace-nowrap ${
-                worldTool === t.id
-                  ? 'border-cyan-500/80 bg-slate-800/90 text-slate-100'
-                  : 'border-slate-800 bg-[#090C12] text-slate-400 hover:border-slate-700 hover:text-slate-200'
-              }`}
-            >
-              {t.icon}
-              <span>{t.label}</span>
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <hr className="border-slate-800/80" />
-
-      <section className="space-y-2">
-        <h2 className="text-xs font-semibold tracking-wide text-slate-300">
-          Species Blueprint to Spawn
-        </h2>
-        <select
-          value={spawnSourceId}
-          onChange={(e) => setSpawnSourceId(e.target.value)}
-          aria-label="Species to spawn"
-          className="min-h-[42px] lg:min-h-0 w-full rounded-lg border border-slate-800 bg-[#090C12] px-2.5 py-2 text-xs font-medium text-slate-100 focus:border-cyan-500 focus:outline-none"
-        >
-          {ORGANISM_PRESETS.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-          <option value="designer">Custom Designer Blueprint</option>
-        </select>
-      </section>
-
-      <hr className="border-slate-800/80" />
-
-      <section className="space-y-2">
-        <h2 className="text-xs font-semibold tracking-wide text-slate-300">Viewport Layers</h2>
-        <div className="space-y-2 text-xs text-slate-300">
-          <label className="flex items-center justify-between cursor-pointer py-0.5">
-            <span>Chemical Scent Gradients</span>
-            <input
-              type="checkbox"
-              checked={showChemFields}
-              onChange={(e) => setShowChemFields(e.target.checked)}
-              className="accent-cyan-500 h-4 w-4 lg:h-3.5 lg:w-3.5"
-            />
-          </label>
-          <label className="flex items-center justify-between cursor-pointer py-0.5">
-            <span>Gradient Vector Field</span>
-            <input
-              type="checkbox"
-              checked={showGradientArrows}
-              onChange={(e) => setShowGradientArrows(e.target.checked)}
-              className="accent-cyan-500 h-4 w-4 lg:h-3.5 lg:w-3.5"
-            />
-          </label>
-          <label className="flex items-center justify-between cursor-pointer py-0.5">
-            <span>Soft-Mesh Springs &amp; Muscles</span>
-            <input
-              type="checkbox"
-              checked={showPhysicsMesh}
-              onChange={(e) => setShowPhysicsMesh(e.target.checked)}
-              className="accent-cyan-500 h-4 w-4 lg:h-3.5 lg:w-3.5"
-            />
-          </label>
-        </div>
-      </section>
-    </div>
-  );
-
-  const renderWorldPhysicsControls = () => (
-    <section className="space-y-3">
-      <h2 className="text-xs font-semibold tracking-wide text-slate-300">
-        Soft-Body &amp; Fluid Physics
-      </h2>
-
-      <div className="space-y-1">
-        <div className="flex items-center justify-between text-[11px] text-slate-400">
-          <span>Internal Gas Pressure</span>
-          <span className="font-mono tabular-nums text-slate-200">
-            {worldParams.internalPressure.toFixed(2)} atm
-          </span>
-        </div>
-        <input
-          type="range"
-          min={0.4}
-          max={2.2}
-          step={0.05}
-          value={worldParams.internalPressure}
-          onChange={(e) =>
-            setWorldParams({ ...worldParams, internalPressure: Number(e.target.value) })
-          }
-          className="lab-slider w-full"
-        />
-      </div>
-
-      <div className="space-y-1">
-        <div className="flex items-center justify-between text-[11px] text-slate-400">
-          <span>Muscle Contraction</span>
-          <span className="font-mono tabular-nums text-slate-200">
-            {Math.round(worldParams.muscleStrength * 100)}%
-          </span>
-        </div>
-        <input
-          type="range"
-          min={0.0}
-          max={0.5}
-          step={0.02}
-          value={worldParams.muscleStrength}
-          onChange={(e) =>
-            setWorldParams({ ...worldParams, muscleStrength: Number(e.target.value) })
-          }
-          className="lab-slider w-full"
-        />
-      </div>
-
-      <div className="space-y-1">
-        <div className="flex items-center justify-between text-[11px] text-slate-400">
-          <span>Flagella Thrust</span>
-          <span className="font-mono tabular-nums text-slate-200">
-            {worldParams.flagellaThrust.toFixed(2)}×
-          </span>
-        </div>
-        <input
-          type="range"
-          min={0.2}
-          max={3.0}
-          step={0.05}
-          value={worldParams.flagellaThrust}
-          onChange={(e) =>
-            setWorldParams({ ...worldParams, flagellaThrust: Number(e.target.value) })
-          }
-          className="lab-slider w-full"
-        />
-      </div>
-
-      <div className="space-y-1">
-        <div className="flex items-center justify-between text-[11px] text-slate-400">
-          <span>Muscle Beat Frequency</span>
-          <span className="font-mono tabular-nums text-slate-200">
-            {worldParams.muscleFrequency.toFixed(2)} Hz
-          </span>
-        </div>
-        <input
-          type="range"
-          min={0.08}
-          max={0.42}
-          step={0.02}
-          value={worldParams.muscleFrequency}
-          onChange={(e) =>
-            setWorldParams({ ...worldParams, muscleFrequency: Number(e.target.value) })
-          }
-          className="lab-slider w-full"
-        />
-      </div>
-
-      <div className="space-y-1">
-        <div className="flex items-center justify-between text-[11px] text-slate-400">
-          <span>Sensor Chemotaxis Gain</span>
-          <span className="font-mono tabular-nums text-slate-200">
-            {worldParams.gradientSensitivity.toFixed(1)}×
-          </span>
-        </div>
-        <input
-          type="range"
-          min={0.0}
-          max={3.0}
-          step={0.1}
-          value={worldParams.gradientSensitivity}
-          onChange={(e) =>
-            setWorldParams({
-              ...worldParams,
-              gradientSensitivity: Number(e.target.value),
-            })
-          }
-          className="lab-slider w-full"
-        />
-      </div>
-
-      <div className="space-y-1">
-        <div className="flex items-center justify-between text-[11px] text-slate-400">
-          <span>Fluid Viscosity Drag</span>
-          <span className="font-mono tabular-nums text-slate-200">
-            {Math.round(worldParams.fluidDrag * 100)}%
-          </span>
-        </div>
-        <input
-          type="range"
-          min={0.01}
-          max={0.2}
-          step={0.005}
-          value={worldParams.fluidDrag}
-          onChange={(e) =>
-            setWorldParams({ ...worldParams, fluidDrag: Number(e.target.value) })
-          }
-          className="lab-slider w-full"
-        />
-      </div>
-
-      <div className="space-y-1">
-        <div className="flex items-center justify-between text-[11px] text-slate-400">
-          <span>Metabolic Burn Rate</span>
-          <span className="font-mono tabular-nums text-slate-200">
-            {worldParams.metabolismRate.toFixed(2)}×
-          </span>
-        </div>
-        <input
-          type="range"
-          min={0.2}
-          max={2.5}
-          step={0.1}
-          value={worldParams.metabolismRate}
-          onChange={(e) =>
-            setWorldParams({ ...worldParams, metabolismRate: Number(e.target.value) })
-          }
-          className="lab-slider w-full"
-        />
-      </div>
-
-      <div className="space-y-1">
-        <div className="flex items-center justify-between text-[11px] text-slate-400">
-          <span>Morphogenesis Cadence</span>
-          <span className="font-mono tabular-nums text-slate-200">
-            {worldParams.growthRate.toFixed(1)}×
-          </span>
-        </div>
-        <input
-          type="range"
-          min={0.5}
-          max={3.0}
-          step={0.25}
-          value={worldParams.growthRate}
-          onChange={(e) =>
-            setWorldParams({ ...worldParams, growthRate: Number(e.target.value) })
-          }
-          className="lab-slider w-full"
-        />
-      </div>
-
-      <div className="space-y-1">
-        <div className="flex items-center justify-between text-[11px] text-slate-400">
-          <span>Max Population Cap</span>
-          <span className="font-mono tabular-nums text-slate-200">
-            {worldParams.maxOrganisms} max
-          </span>
-        </div>
-        <input
-          type="range"
-          min={4}
-          max={36}
-          step={1}
-          value={worldParams.maxOrganisms}
-          onChange={(e) =>
-            setWorldParams({ ...worldParams, maxOrganisms: Number(e.target.value) })
-          }
-          className="lab-slider w-full"
-        />
-      </div>
-
-      <label className="flex items-center justify-between pt-1 text-xs text-slate-300 cursor-pointer">
-        <span>Auto-Mating (DNA Crossover)</span>
-        <input
-          type="checkbox"
-          checked={worldParams.autoMating}
-          onChange={(e) =>
-            setWorldParams({ ...worldParams, autoMating: e.target.checked })
-          }
-          className="accent-cyan-500 h-4 w-4 lg:h-3.5 lg:w-3.5"
-        />
-      </label>
-    </section>
-  );
-
-  const renderDesignerBrushesControls = () => (
-    <div className="space-y-5">
-      <section className="space-y-2.5">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-semibold tracking-wide text-slate-300">
-            Organism Blueprint
-          </h2>
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="flex min-h-[36px] lg:min-h-0 items-center gap-1 rounded border border-slate-800 bg-slate-900 px-2.5 py-1 text-[11px] text-slate-300 hover:border-slate-700 hover:text-slate-100 transition-colors whitespace-nowrap"
-            >
-              <Upload className="h-3 w-3" /> Import
-            </button>
-            <button
-              type="button"
-              onClick={handleClearBlueprint}
-              className="flex min-h-[36px] lg:min-h-0 items-center gap-1 rounded border border-slate-800 bg-slate-900 px-2.5 py-1 text-[11px] text-slate-300 hover:border-slate-700 hover:text-rose-300 transition-colors whitespace-nowrap"
-            >
-              <Trash2 className="h-3 w-3" /> Clear
-            </button>
-          </div>
-        </div>
-
-        <select
-          value={selectedPresetId}
-          onChange={(e) => handleSelectPreset(e.target.value)}
-          aria-label="Organism Blueprint Preset"
-          className="min-h-[42px] lg:min-h-0 w-full rounded-lg border border-slate-800 bg-[#090C12] px-3 py-2 text-xs font-medium text-slate-100 focus:border-cyan-500 focus:outline-none"
-        >
-          {ORGANISM_PRESETS.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-          {selectedPresetId === 'custom' && (
-            <option value="custom">Custom Painted Blueprint</option>
-          )}
-        </select>
-
-        <p className="text-[11px] leading-relaxed text-slate-400">
-          {ORGANISM_PRESETS.find((p) => p.id === selectedPresetId)?.subtitle ??
-            'Custom multi-tissue target geometry drawn on 128×128 blueprint.'}
-        </p>
-      </section>
-
-      <hr className="border-slate-800/80" />
-
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-semibold tracking-wide text-slate-300">
-            Specialized Cell Brushes
-          </h2>
-          <span className="font-mono text-[11px] tabular-nums text-slate-400">
-            r = {brushSize} px
-          </span>
-        </div>
-
-        <div className="grid grid-cols-2 gap-1.5">
-          {brushTools.map((tool) => {
-            const active = activeTool === tool.id;
-            return (
-              <button
-                key={tool.id}
-                type="button"
-                onClick={() => {
-                  setActiveTool(tool.id);
-                  if (mobileSheet === 'tools') setMobileSheet('none');
-                }}
-                className={`flex min-h-[44px] lg:min-h-0 items-center gap-2 rounded-lg border px-2.5 py-2 text-xs font-medium transition-colors whitespace-nowrap ${
-                  active
-                    ? 'border-cyan-500/80 bg-slate-800/90 text-slate-100'
-                    : 'border-slate-800 bg-[#090C12] text-slate-400 hover:border-slate-700 hover:text-slate-200'
-                }`}
-              >
-                {tool.color ? (
-                  <span
-                    className="h-2.5 w-2.5 rounded-sm shrink-0"
-                    style={{ backgroundColor: tool.color }}
-                  />
-                ) : (
-                  tool.icon
-                )}
-                <span>{tool.label}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="space-y-1">
-          <div className="flex items-center justify-between text-[11px] text-slate-400">
-            <span>Tool Radius</span>
-            <span className="font-mono tabular-nums text-slate-300">{brushSize} px</span>
-          </div>
-          <input
-            type="range"
-            min={1}
-            max={7}
-            step={1}
-            value={brushSize}
-            onChange={(e) => setBrushSize(Number(e.target.value))}
-            className="lab-slider w-full"
-          />
-        </div>
-
-        <p className="text-[11px] leading-relaxed text-slate-400">
-          {activeTool === 'scalpel'
-            ? 'Drag across the Simulation canvas to excise tissue and observe regeneration.'
-            : activeTool === 'eraser'
-              ? 'Paint on Blueprint canvas to carve empty extracellular cavities.'
-              : TISSUE_SPECS[
-                  activeTool === 'epidermis'
-                    ? TissueType.EPIDERMIS
-                    : activeTool === 'mesoderm'
-                      ? TissueType.MESODERM
-                      : activeTool === 'vascular'
-                        ? TissueType.VASCULAR
-                        : activeTool === 'neural'
-                          ? TissueType.NEURAL
-                          : activeTool === 'sensor'
-                            ? TissueType.SENSOR
-                            : activeTool === 'muscle'
-                              ? TissueType.MUSCLE
-                              : TissueType.FLAGELLA
-                ].role}
-        </p>
-      </section>
-    </div>
-  );
-
-  const renderDesignerGrowthControls = () => (
-    <div className="space-y-5">
-      <section className="space-y-3">
-        <h2 className="text-xs font-semibold tracking-wide text-slate-300">
-          Morphogenesis Algorithm
-        </h2>
-        <div className="grid grid-cols-2 gap-1 rounded-lg bg-[#090C12] p-1 border border-slate-800">
-          <button
-            type="button"
-            onClick={() => handleModeChange('mipmap')}
-            className={`min-h-[40px] lg:min-h-0 rounded-md px-2 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${
-              simParams.growthMode === 'mipmap'
-                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Mipmap L3→L0
-          </button>
-          <button
-            type="button"
-            onClick={() => handleModeChange('legacy')}
-            className={`min-h-[40px] lg:min-h-0 rounded-md px-2 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${
-              simParams.growthMode === 'legacy'
-                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Legacy 2D Grid
-          </button>
-        </div>
-
-        {simParams.growthMode === 'mipmap' ? (
-          <label className="flex items-center justify-between gap-2 rounded-lg border border-slate-800 bg-[#090C12] px-3 py-2 text-xs text-slate-300 cursor-pointer">
-            <span>Coarse-First Wave Gating</span>
-            <input
-              type="checkbox"
-              checked={simParams.stagedWaves}
-              onChange={(e) => {
-                const next = { ...simParams, stagedWaves: e.target.checked };
-                setSimParams(next);
-                setSimState(createSimState(genome, next));
-              }}
-              className="accent-cyan-500 h-4 w-4 lg:h-3.5 lg:w-3.5"
-            />
-          </label>
-        ) : (
-          <div className="space-y-1">
-            <div className="flex items-center justify-between text-[11px] text-slate-400">
-              <span>Legacy Node Limit</span>
-              <span className="font-mono tabular-nums text-amber-300">
-                {simParams.legacyNodeCap === 0 ? 'Uncapped' : `${simParams.legacyNodeCap} nodes`}
-              </span>
-            </div>
-            <select
-              value={simParams.legacyNodeCap}
-              onChange={(e) => {
-                const next = { ...simParams, legacyNodeCap: Number(e.target.value) };
-                setSimParams(next);
-                setSimState(createSimState(genome, next));
-              }}
-              className="min-h-[42px] lg:min-h-0 w-full rounded border border-slate-800 bg-[#090C12] px-2.5 py-1.5 text-xs text-slate-200"
-            >
-              <option value={0}>Uncapped (Dense L0 BFS)</option>
-              <option value={256}>256 Nodes (Original Repo Cap)</option>
-              <option value={1024}>1,024 Nodes</option>
-            </select>
-          </div>
-        )}
-      </section>
-
-      <hr className="border-slate-800/80" />
-
-      <section className="space-y-3.5">
-        <h2 className="text-xs font-semibold tracking-wide text-slate-300">
-          Cellular Parameters
-        </h2>
-        <div className="space-y-1">
-          <div className="flex items-center justify-between text-[11px] text-slate-400">
-            <span>Subdivision Maturation</span>
-            <span className="font-mono tabular-nums text-slate-200">
-              {simParams.subdivisionDelay} ticks
-            </span>
-          </div>
-          <input
-            type="range"
-            min={1}
-            max={10}
-            step={1}
-            value={simParams.subdivisionDelay}
-            onChange={(e) =>
-              setSimParams({ ...simParams, subdivisionDelay: Number(e.target.value) })
-            }
-            className="lab-slider w-full"
-          />
-        </div>
-        <div className="space-y-1">
-          <div className="flex items-center justify-between text-[11px] text-slate-400">
-            <span>Division ATP Cost</span>
-            <span className="font-mono tabular-nums text-slate-200">
-              {simParams.divisionCost.toFixed(2)} ATP
-            </span>
-          </div>
-          <input
-            type="range"
-            min={0.05}
-            max={0.65}
-            step={0.05}
-            value={simParams.divisionCost}
-            onChange={(e) =>
-              setSimParams({ ...simParams, divisionCost: Number(e.target.value) })
-            }
-            className="lab-slider w-full"
-          />
-        </div>
-      </section>
-    </div>
-  );
 
   return (
     <div className="min-h-screen bg-[#090C12] text-slate-100 flex flex-col pb-16 lg:pb-0">
@@ -1279,12 +934,24 @@ export default function App() {
         <div className="flex items-center shrink-0">
           <button
             type="button"
+            disabled={spawnLockedByBreach}
             onClick={handlePrimarySpawnButton}
-            className="min-h-[38px] sm:min-h-0 rounded-lg bg-cyan-500 px-3 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold text-slate-950 hover:bg-cyan-400 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+            title={
+              spawnLockedByBreach
+                ? 'Spawning is locked after the battle containment barrier breaks'
+                : 'Consume food on your side to spawn organism'
+            }
+            className="min-h-[38px] sm:min-h-0 rounded-lg bg-cyan-500 px-3 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold text-slate-950 hover:bg-cyan-400 disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
           >
-            <span className="sm:hidden">Spawn</span>
+            <span className="sm:hidden">
+              {spawnLockedByBreach ? 'Locked' : 'Spawn'}
+            </span>
             <span className="hidden sm:inline">
-              {view === 'designer' ? 'Spawn in World' : 'Spawn Organism'}
+              {spawnLockedByBreach
+                ? 'Spawn Locked (Breach)'
+                : view === 'designer'
+                  ? 'Spawn in World'
+                  : 'Spawn Organism'}
             </span>
           </button>
         </div>
@@ -1297,22 +964,108 @@ export default function App() {
         <div className="mx-auto flex w-full max-w-[1680px] flex-1 flex-col lg:flex-row">
           {/* Desktop Left World Physics & Gradient Control Column */}
           <aside className="hidden lg:block w-[290px] shrink-0 border-r border-slate-800 bg-[#0D111A] p-4">
-            <div className="space-y-5">
-              {renderWorldToolsControls()}
-              <hr className="border-slate-800/80" />
-              {renderWorldPhysicsControls()}
-            </div>
+            <WorldControlsPanel
+              worldTool={worldTool}
+              spawnLockedByBreach={spawnLockedByBreach}
+              spawnSourceId={spawnSourceId}
+              showChemFields={showChemFields}
+              showGradientArrows={showGradientArrows}
+              showPhysicsMesh={showPhysicsMesh}
+              worldParams={worldParams}
+              onSelectTool={setWorldTool}
+              onChangeSpawnSource={setSpawnSourceId}
+              onToggleChemFields={setShowChemFields}
+              onToggleGradientArrows={setShowGradientArrows}
+              onTogglePhysicsMesh={setShowPhysicsMesh}
+              onChangeWorldParams={setWorldParams}
+            />
           </aside>
 
-          {/* Center Fluid World Stage (ordered first on mobile!) */}
-          <main className="order-1 lg:order-2 flex-1 min-w-0 p-3 sm:p-4 lg:p-6 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
+          {/* Center Fluid World Stage */}
+          <main className="order-1 lg:order-2 flex-1 min-w-0 p-3 sm:p-4 lg:p-6 space-y-3.5">
+            {/* Biome Area Switcher + Audio / Battle Mode Toolbar */}
+            <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-slate-800/80 pb-3">
+              {/* 5 Aquatic Biomes */}
+              <div className="flex items-center gap-1 overflow-x-auto rounded-lg border border-slate-800 bg-[#0D111A] p-1">
+                {BIOMES.map((b) => {
+                  const unlocked = isBiomeUnlocked(b.id, progressionItems);
+                  const active = activeBiomeId === b.id;
+                  return (
+                    <button
+                      key={b.id}
+                      type="button"
+                      disabled={!unlocked}
+                      onClick={() => switchBiomeOrMode(b.id, battleMode)}
+                      title={unlocked ? b.subtitle : b.unlockHint}
+                      className={`flex min-h-[36px] lg:min-h-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                        active
+                          ? 'bg-slate-800 text-slate-100'
+                          : unlocked
+                            ? 'text-slate-400 hover:text-slate-200'
+                            : 'text-slate-600 cursor-not-allowed'
+                      }`}
+                    >
+                      {!unlocked && <Lock className="h-3 w-3 text-slate-600" />}
+                      <span>{b.shortName}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Audio + Battle vs AI Toggle */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => switchBiomeOrMode(activeBiomeId, !battleMode)}
+                  className={`flex min-h-[38px] lg:min-h-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                    battleMode
+                      ? 'border-rose-500/70 bg-rose-500/15 text-rose-200'
+                      : 'border-slate-800 bg-[#0D111A] text-slate-300 hover:border-slate-700'
+                  }`}
+                >
+                  <Swords className="h-3.5 w-3.5" />
+                  <span>{battleMode ? 'Battle vs AI: On' : 'Battle vs AI'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSfxEnabled((s) => !s)}
+                  title="Toggle procedural water & cellular SFX"
+                  className={`flex min-h-[38px] lg:min-h-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                    sfxEnabled
+                      ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-200'
+                      : 'border-slate-800 bg-[#0D111A] text-slate-500'
+                  }`}
+                >
+                  {sfxEnabled ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
+                  <span className="hidden sm:inline">SFX</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setMusicEnabled((m) => !m)}
+                  title="Toggle generative ambient synth music"
+                  className={`flex min-h-[38px] lg:min-h-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                    musicEnabled
+                      ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-200'
+                      : 'border-slate-800 bg-[#0D111A] text-slate-500'
+                  }`}
+                >
+                  <Music className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Music</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Active Biome Title + Play/Step/Reset Strip */}
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h1 className="text-sm sm:text-base font-semibold text-slate-100">
-                  Fluid Chemotaxis &amp; Soft-Body Ecosystem
+                  {activeBiomeDef.name}
+                  {battleMode ? ' · Arena Battle vs AI' : ''}
                 </h1>
                 <p className="text-[11px] sm:text-xs text-slate-400">
-                  Tap any organism to inspect its morphogenesis dashboard · WebGL2 chemical fields &amp; GPU flagella
+                  {activeBiomeDef.subtitle}
                 </p>
               </div>
 
@@ -1331,12 +1084,12 @@ export default function App() {
                     setWorldPlaying(false);
                     const w = worldRef.current;
                     stepWorldSimulation(w, worldParamsRef.current, simParamsRef.current);
-                    setWorldState({
-                      ...w,
-                      organisms: [...w.organisms],
-                      pellets: [...w.pellets],
-                    });
-                    triggerProgressionEval();
+                    syncAdaptiveSound(w);
+                    if (w.soundEvents.length > 0) {
+                      soundEngine.playEvents(w.soundEvents);
+                      w.soundEvents.length = 0;
+                    }
+                    bumpWorldVisuals(true);
                   }}
                   className="flex min-h-[40px] lg:min-h-0 items-center gap-1.5 rounded-lg border border-slate-800 bg-[#0E131D] px-3 py-1.5 text-xs font-medium text-slate-300 hover:border-slate-700 hover:text-slate-100 transition-colors whitespace-nowrap shrink-0"
                 >
@@ -1345,11 +1098,7 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    const fresh = createInitialWorld(simParamsRef.current);
-                    setWorldState(fresh);
-                    setSelectedOrgId(fresh.organisms[0]?.id ?? null);
-                  }}
+                  onClick={() => switchBiomeOrMode(activeBiomeId, battleMode)}
                   className="flex min-h-[40px] lg:min-h-0 items-center gap-1.5 rounded-lg border border-slate-800 bg-[#0E131D] px-3 py-1.5 text-xs font-medium text-slate-300 hover:border-slate-700 hover:text-slate-100 transition-colors whitespace-nowrap shrink-0"
                 >
                   <RotateCcw className="h-3.5 w-3.5" />
@@ -1359,57 +1108,108 @@ export default function App() {
               </div>
             </div>
 
+            {/* Battle vs AI Barrier & Victory Status Bar */}
+            {world.battle.enabled && (
+              <div className="rounded-lg border border-slate-800 bg-[#0D111A] px-3.5 py-2.5 space-y-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="font-mono tabular-nums text-cyan-300">
+                    Player: {world.battle.playerCount} orgs · {Math.round(world.battle.playerStrength).toLocaleString()}/{world.battle.breachThreshold.toLocaleString()} PWR
+                  </div>
+                  <div className="flex items-center gap-2 font-semibold text-slate-200">
+                    {world.battle.winner === 'player' ? (
+                      <span className="text-emerald-300">Victory — Player Controls Ecosystem!</span>
+                    ) : world.battle.winner === 'ai' ? (
+                      <span className="text-rose-400">Defeat — AI Swarm Dominated Tank</span>
+                    ) : world.battle.barrierActive ? (
+                      <span className="text-slate-300">
+                        Containment Wall Active ({world.battle.barrierHealth}%) · Reach {world.battle.breachThreshold.toLocaleString()} PWR or 15 orgs to breach
+                      </span>
+                    ) : (
+                      <span className="text-amber-300">Barrier Shattered — Free Combat!</span>
+                    )}
+                    {world.battle.winner !== null && (
+                      <button
+                        type="button"
+                        onClick={() => switchBiomeOrMode(activeBiomeId, true)}
+                        className="rounded border border-cyan-500/60 bg-cyan-500/15 px-2 py-0.5 text-[11px] font-medium text-cyan-200 hover:bg-cyan-500/25 transition-colors whitespace-nowrap"
+                      >
+                        Rematch
+                      </button>
+                    )}
+                  </div>
+                  <div className="font-mono tabular-nums text-rose-300">
+                    AI: {world.battle.aiCount} orgs · {Math.round(world.battle.aiStrength).toLocaleString()}/{world.battle.breachThreshold.toLocaleString()} PWR
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="h-1.5 overflow-hidden rounded-sm bg-slate-800">
+                    <div
+                      className="h-full bg-cyan-400 transition-all duration-200"
+                      style={{
+                        width: `${Math.min(100, (world.battle.playerStrength / world.battle.breachThreshold) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-sm bg-slate-800 flex justify-end">
+                    <div
+                      className="h-full bg-rose-400 transition-all duration-200"
+                      style={{
+                        width: `${Math.min(100, (world.battle.aiStrength / world.battle.breachThreshold) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {spawnNotice && (
+              <div className="flex items-center justify-between rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                <span>{spawnNotice}</span>
+                <button
+                  type="button"
+                  onClick={() => setSpawnNotice(null)}
+                  className="text-amber-300 hover:text-amber-100"
+                  aria-label="Dismiss notice"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+
             <WorldCanvas
-              world={worldState}
+              worldRef={worldRef}
+              worldParamsRef={worldParamsRef}
+              simParamsRef={simParamsRef}
+              worldPlaying={worldPlaying}
+              battleEnabled={battleMode}
               selectedOrgId={selectedOrgId}
               activeTool={worldTool}
               showChemFields={showChemFields}
               showGradientArrows={showGradientArrows}
               showPhysicsMesh={showPhysicsMesh}
-              onSelectOrganism={(org) => {
-                setSelectedOrgId(org ? org.id : null);
-              }}
+              sunlightLevel={worldParams.sunlightLevel}
+              renderEpoch={renderEpoch}
+              onSimulationTicked={handleWorldSimulationTicked}
+              onSelectOrganism={(org) => setSelectedOrgId(org ? org.id : null)}
               onSpawnAt={handleSpawnAt}
               onDropChemical={handleDropChemical}
               onPoke={handlePoke}
               onInjureAt={handleInjureWorld}
             />
 
-            {/* Active Organism Roster + Tissue Legend */}
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-medium text-slate-400 mr-1">Active Organisms:</span>
-                {worldState.organisms.length === 0 ? (
-                  <span className="font-mono text-xs text-slate-500">
-                    No living organisms · Spawn one or Reset World
-                  </span>
-                ) : (
-                  worldState.organisms.map((org) => (
-                    <button
-                      key={org.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedOrgId(org.id);
-                        if (window.innerWidth < 1024) {
-                          setMobileSheet('inspector');
-                        }
-                      }}
-                      className={`min-h-[38px] lg:min-h-0 rounded-md border px-2.5 py-1 font-mono text-xs transition-colors whitespace-nowrap ${
-                        selectedOrgId === org.id
-                          ? 'border-cyan-500/80 bg-cyan-500/15 text-cyan-200'
-                          : org.energyReserve < 25
-                            ? 'border-rose-500/50 bg-rose-500/10 text-rose-200 hover:border-rose-400'
-                            : 'border-slate-800 bg-[#0E131D] text-slate-300 hover:border-slate-700'
-                      }`}
-                    >
-                      #{org.colonyId}
-                      {org.isFragment ? ' (frag)' : ''} {org.name} · {org.energyReserve.toFixed(0)}% ATP
-                    </button>
-                  ))
-                )}
+            {/* Static Tissue Legend (no per-tick HTML roster elements) */}
+            <div className="space-y-2 pt-1">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
+                <span>
+                  Click any organism on the canvas to inspect neural &amp; vascular telemetry · ATP % is blended in WebGL2
+                </span>
+                <span className="font-mono tabular-nums text-slate-300">
+                  {world.organisms.length} active · {world.pellets.length} nutrients
+                </span>
               </div>
 
-              <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-slate-800/80 pt-3 text-xs text-slate-400">
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-slate-800/80 pt-2.5 text-xs text-slate-400">
                 {ACTIVE_TISSUE_TYPES.map((t) => {
                   const spec = TISSUE_SPECS[t];
                   return (
@@ -1422,6 +1222,10 @@ export default function App() {
                     </span>
                   );
                 })}
+                <span className="flex items-center gap-1.5 whitespace-nowrap">
+                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-lime-400" />
+                  <span className="text-slate-300">Photosynthetic Algae</span>
+                </span>
               </div>
             </div>
           </main>
@@ -1431,7 +1235,7 @@ export default function App() {
             <div className="hidden lg:flex">
               <OrganismSideTab
                 organism={selectedOrganism}
-                canMate={worldState.organisms.length >= 2}
+                canMate={canMateSelected}
                 onClose={() => setSelectedOrgId(null)}
                 onEditInDesigner={handleEditOrganismInDesigner}
                 onCloneOrganism={handleCloneOrganism}
@@ -1446,16 +1250,27 @@ export default function App() {
       ) : (
         /* BLUEPRINT DESIGNER & STANDALONE MORPHOGENESIS WORKBENCH */
         <div className="mx-auto flex w-full max-w-[1520px] flex-1 flex-col lg:flex-row">
-          {/* Desktop Left Designer Sidebar */}
           <aside className="hidden lg:block w-[330px] shrink-0 border-r border-slate-800 bg-[#0D111A] p-5">
-            <div className="space-y-6">
-              {renderDesignerBrushesControls()}
-              <hr className="border-slate-800/80" />
-              {renderDesignerGrowthControls()}
-            </div>
+            <DesignerControlsPanel
+              selectedPresetId={selectedPresetId}
+              activeTool={activeTool}
+              brushSize={brushSize}
+              simParams={simParams}
+              onRequestImport={() => fileInputRef.current?.click()}
+              onClearBlueprint={handleClearBlueprint}
+              onSelectPreset={handleSelectPreset}
+              onSelectTool={setActiveTool}
+              onChangeBrushSize={setBrushSize}
+              onChangeMode={handleModeChange}
+              onChangeSimParams={(next, reset) => {
+                setSimParams(next);
+                if (reset) {
+                  setSimState(createSimState(genome, next));
+                }
+              }}
+            />
           </aside>
 
-          {/* Main Designer Workbench */}
           <main className="order-1 lg:order-2 flex-1 space-y-6 p-3 sm:p-5 lg:p-7">
             <section className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800/80 pb-3">
@@ -1643,6 +1458,10 @@ export default function App() {
             </section>
 
             <section className="border-t border-slate-800/80 pt-5">
+              <ResNetEditorPanel config={neuralConfig} onChange={handleNeuralConfigChange} />
+            </section>
+
+            <section className="border-t border-slate-800/80 pt-5">
               <MipmapPyramidStrip
                 genome={genome}
                 simState={simState}
@@ -1680,7 +1499,7 @@ export default function App() {
                 ? mobileSheet === 'tools'
                   ? 'World Tools & Layers'
                   : mobileSheet === 'physics'
-                    ? 'Soft-Body & Fluid Physics'
+                    ? 'Soft-Body, Sunlight & Fluid Physics'
                     : selectedOrganism
                       ? `Organism #${selectedOrganism.colonyId} · ${selectedOrganism.name}`
                       : 'Organism Inspector'
@@ -1698,15 +1517,52 @@ export default function App() {
           </div>
 
           {view === 'world' && mobileSheet === 'tools' && (
-            <div className="p-4">{renderWorldToolsControls()}</div>
+            <div className="p-4">
+              <WorldControlsPanel
+                section="tools"
+                worldTool={worldTool}
+                spawnLockedByBreach={spawnLockedByBreach}
+                spawnSourceId={spawnSourceId}
+                showChemFields={showChemFields}
+                showGradientArrows={showGradientArrows}
+                showPhysicsMesh={showPhysicsMesh}
+                worldParams={worldParams}
+                onSelectTool={(t) => {
+                  setWorldTool(t);
+                  setMobileSheet('none');
+                }}
+                onChangeSpawnSource={setSpawnSourceId}
+                onToggleChemFields={setShowChemFields}
+                onToggleGradientArrows={setShowGradientArrows}
+                onTogglePhysicsMesh={setShowPhysicsMesh}
+                onChangeWorldParams={setWorldParams}
+              />
+            </div>
           )}
           {view === 'world' && mobileSheet === 'physics' && (
-            <div className="p-4">{renderWorldPhysicsControls()}</div>
+            <div className="p-4">
+              <WorldControlsPanel
+                section="physics"
+                worldTool={worldTool}
+                spawnLockedByBreach={spawnLockedByBreach}
+                spawnSourceId={spawnSourceId}
+                showChemFields={showChemFields}
+                showGradientArrows={showGradientArrows}
+                showPhysicsMesh={showPhysicsMesh}
+                worldParams={worldParams}
+                onSelectTool={setWorldTool}
+                onChangeSpawnSource={setSpawnSourceId}
+                onToggleChemFields={setShowChemFields}
+                onToggleGradientArrows={setShowGradientArrows}
+                onTogglePhysicsMesh={setShowPhysicsMesh}
+                onChangeWorldParams={setWorldParams}
+              />
+            </div>
           )}
           {view === 'world' && mobileSheet === 'inspector' && selectedOrganism && (
             <OrganismSideTab
               organism={selectedOrganism}
-              canMate={worldState.organisms.length >= 2}
+              canMate={canMateSelected}
               onClose={() => setMobileSheet('none')}
               onEditInDesigner={handleEditOrganismInDesigner}
               onCloneOrganism={handleCloneOrganism}
@@ -1717,10 +1573,53 @@ export default function App() {
             />
           )}
           {view === 'designer' && mobileSheet === 'tools' && (
-            <div className="p-4">{renderDesignerBrushesControls()}</div>
+            <div className="p-4">
+              <DesignerControlsPanel
+                section="brushes"
+                selectedPresetId={selectedPresetId}
+                activeTool={activeTool}
+                brushSize={brushSize}
+                simParams={simParams}
+                onRequestImport={() => fileInputRef.current?.click()}
+                onClearBlueprint={handleClearBlueprint}
+                onSelectPreset={handleSelectPreset}
+                onSelectTool={(t) => {
+                  setActiveTool(t);
+                  setMobileSheet('none');
+                }}
+                onChangeBrushSize={setBrushSize}
+                onChangeMode={handleModeChange}
+                onChangeSimParams={(next, reset) => {
+                  setSimParams(next);
+                  if (reset) {
+                    setSimState(createSimState(genome, next));
+                  }
+                }}
+              />
+            </div>
           )}
           {view === 'designer' && mobileSheet === 'physics' && (
-            <div className="p-4">{renderDesignerGrowthControls()}</div>
+            <div className="p-4">
+              <DesignerControlsPanel
+                section="growth"
+                selectedPresetId={selectedPresetId}
+                activeTool={activeTool}
+                brushSize={brushSize}
+                simParams={simParams}
+                onRequestImport={() => fileInputRef.current?.click()}
+                onClearBlueprint={handleClearBlueprint}
+                onSelectPreset={handleSelectPreset}
+                onSelectTool={setActiveTool}
+                onChangeBrushSize={setBrushSize}
+                onChangeMode={handleModeChange}
+                onChangeSimParams={(next, reset) => {
+                  setSimParams(next);
+                  if (reset) {
+                    setSimState(createSimState(genome, next));
+                  }
+                }}
+              />
+            </div>
           )}
         </div>
       )}

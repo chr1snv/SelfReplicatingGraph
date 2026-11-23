@@ -50,6 +50,9 @@ vec3 tissueColor(int t) {
   if (t == 5) return vec3(${TISSUE_RGB_TABLE[TissueType.SENSOR].map((v) => v.toFixed(4)).join(', ')});
   if (t == 6) return vec3(${TISSUE_RGB_TABLE[TissueType.MUSCLE].map((v) => v.toFixed(4)).join(', ')});
   if (t == 7) return vec3(${TISSUE_RGB_TABLE[TissueType.FLAGELLA].map((v) => v.toFixed(4)).join(', ')});
+  if (t == 8) return vec3(${TISSUE_RGB_TABLE[TissueType.DIGESTIVE].map((v) => v.toFixed(4)).join(', ')});
+  if (t == 9) return vec3(${TISSUE_RGB_TABLE[TissueType.EXCRETORY].map((v) => v.toFixed(4)).join(', ')});
+  if (t == 10) return vec3(${TISSUE_RGB_TABLE[TissueType.SPIKE].map((v) => v.toFixed(4)).join(', ')});
   return vec3(0.035, 0.047, 0.071);
 }
 
@@ -117,6 +120,7 @@ export class BlueprintGLRenderer {
   private bpTex: WebGLTexture;
   private phiTex: WebGLTexture;
   private bpBytes = new Uint8Array(BASE_DIM * BASE_DIM * 4);
+  private phiBytes = new Uint8Array(BASE_DIM * BASE_DIM * 4);
   private phiDim = 0;
 
   constructor(gl: WebGL2RenderingContext) {
@@ -171,24 +175,25 @@ export class BlueprintGLRenderer {
       this.bpBytes,
     );
 
-    // Upload inspected level-set phiGrid
+    // Upload inspected level-set phiGrid using pre-allocated phiBytes buffer
     const dim = mipDim(options.inspectLevel);
     const layer = genome.layers[options.inspectLevel];
-    const phiBytes = new Uint8Array(dim * dim * 4);
-    for (let i = 0; i < dim * dim; i++) {
+    const len = dim * dim;
+    for (let i = 0; i < len; i++) {
       const norm = Math.min(1, Math.max(0, layer.phiGrid[i] / 24 + 0.5));
       const b = (norm * 255) | 0;
       const o = i * 4;
-      phiBytes[o] = b;
-      phiBytes[o + 3] = 255;
+      this.phiBytes[o] = b;
+      this.phiBytes[o + 3] = 255;
     }
+    const view = this.phiBytes.subarray(0, len * 4);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.phiTex);
     if (this.phiDim !== dim) {
       this.phiDim = dim;
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, dim, dim, 0, gl.RGBA, gl.UNSIGNED_BYTE, phiBytes);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, dim, dim, 0, gl.RGBA, gl.UNSIGNED_BYTE, view);
     } else {
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, dim, dim, gl.RGBA, gl.UNSIGNED_BYTE, phiBytes);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, dim, dim, gl.RGBA, gl.UNSIGNED_BYTE, view);
     }
 
     gl.viewport(0, 0, canvas.width, canvas.height);

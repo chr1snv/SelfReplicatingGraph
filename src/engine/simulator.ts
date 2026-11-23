@@ -34,6 +34,14 @@ const SIGNAL_SCRATCH: Record<MipLevel, Float32Array> = {
   3: new Float32Array((BASE_DIM >> 3) * (BASE_DIM >> 3)),
 };
 
+// Pre-allocated fixed-size spawn buffers (avoids dynamic object allocations every simulation tick)
+const MAX_SPAWN_CAP = BASE_DIM * BASE_DIM;
+const SPAWN_IDX = new Int32Array(MAX_SPAWN_CAP);
+const SPAWN_NODE_ID = new Int32Array(MAX_SPAWN_CAP);
+const SPAWN_TISSUE = new Uint8Array(MAX_SPAWN_CAP);
+const SPAWN_ENERGY = new Float32Array(MAX_SPAWN_CAP);
+const SPAWN_PARENT_IDX = new Int32Array(MAX_SPAWN_CAP);
+
 function revNeighbor(dir: number): number {
   switch (dir) {
     case 0:
@@ -157,6 +165,9 @@ function rebuildCompositeAndMetrics(state: SimState, genome: CompiledGenome): vo
   let sens = 0;
   let musc = 0;
   let flag = 0;
+  let dig = 0;
+  let exc = 0;
+  let spk = 0;
 
   for (let i = 0; i < BASE_DIM * BASE_DIM; i++) {
     const target = genome.blueprint[i];
@@ -174,6 +185,9 @@ function rebuildCompositeAndMetrics(state: SimState, genome: CompiledGenome): vo
       else if (actual === TissueType.SENSOR) sens++;
       else if (actual === TissueType.MUSCLE) musc++;
       else if (actual === TissueType.FLAGELLA) flag++;
+      else if (actual === TissueType.DIGESTIVE) dig++;
+      else if (actual === TissueType.EXCRETORY) exc++;
+      else if (actual === TissueType.SPIKE) spk++;
     }
 
     if (tOccupied && aOccupied) {
@@ -216,6 +230,9 @@ function rebuildCompositeAndMetrics(state: SimState, genome: CompiledGenome): vo
     sensor: sens,
     muscle: musc,
     flagella: flag,
+    digestive: dig,
+    excretory: exc,
+    spike: spk,
   };
 
   if (state.history.length === 0 || state.history[state.history.length - 1].tick !== state.tick) {
@@ -370,26 +387,28 @@ export function stepSimulation(
 
         const tissue = tissueArr[idx] as TissueType;
 
-        // Basal nutrient absorption from medium
+        // Basal nutrient absorption from medium (Vascular & Digestive absorb fastest)
         const harvestRate =
-          tissue === TissueType.VASCULAR
-            ? 0.085 * params.vascularBoost
-            : tissue === TissueType.EPIDERMIS
+          tissue === TissueType.VASCULAR || tissue === TissueType.DIGESTIVE
+            ? 0.088 * params.vascularBoost
+            : tissue === TissueType.EPIDERMIS || tissue === TissueType.SPIKE
               ? 0.028
               : 0.036;
         const absorbed = consumeBlockNutrient(nutrients, gx, gy, stride, harvestRate);
         let e = nextEnergy[idx] + absorbed * 1.35 + 0.012;
         if (e > 1.0) e = 1.0;
 
-        // Epidermis retains energy; others have tiny metabolic upkeep
-        const upkeep = tissue === TissueType.EPIDERMIS ? 0.002 : 0.005;
+        // Epidermis & Chitin Spikes have lower metabolic upkeep
+        const upkeep =
+          tissue === TissueType.EPIDERMIS || tissue === TissueType.SPIKE ? 0.002 : 0.005;
         e -= upkeep;
         if (e < 0.05) e = 0.05;
         nextEnergy[idx] = e;
 
-        // Vascular cells actively diffuse ATP to 4 neighbors; Neural cells broadcast morphogen signal
-        if (tissue === TissueType.VASCULAR && e > 0.25) {
-          const share = 0.045 * params.vascularBoost;
+        // Vascular cells diffuse ATP to 4 neighbors; Excretory detoxifies neighboring cells
+        if ((tissue === TissueType.VASCULAR || tissue === TissueType.DIGESTIVE) && e > 0.25) {
+          const share =
+            (tissue === TissueType.VASCULAR ? 0.045 : 0.025) * params.vascularBoost;
           if (gy > 0 && alive[idx - dim]) {
             const v = nextEnergy[idx - dim] + share;
             nextEnergy[idx - dim] = v > 1.0 ? 1.0 : v;
@@ -436,7 +455,7 @@ export function stepSimulation(
   if (params.growthMode === 'legacy') {
     // LEGACY SINGLE-GRID MODE (L0 only, sequential outward gather without mipmap hierarchy)
     const l0 = state.layers[0];
-    const spawns: Array<{ idx: number; nodeId: number; tissue: TissueType; energy: number }> = [];
+    let spawnCount = 0;
     const cap = params.legacyNodeCap > 0 ? params.legacyNodeCap : Infinity;
 
     for (let gy = 0; gy < BASE_DIM; gy++) {
@@ -462,13 +481,12 @@ export function stepSimulation(
             const targetDir = genome.legacyNodeById.get(targetId);
             if (targetDir) {
               const localFood = nutrients[idx];
-              if (localFood >= 0.05) {
-                spawns.push({
-                  idx,
-                  nodeId: targetId,
-                  tissue: targetDir.tissue,
-                  energy: Math.min(1, l0.energy[nIdx] * 0.5 + localFood * 0.45),
-                });
+              if (localFood >= 0.05 && spawnCount < MAX_SPAWN_CAP) {
+                SPAWN_IDX[spawnCount] = idx;
+                SPAWN_NODE_ID[spawnCount] = targetId;
+                SPAWN_TISSUE[spawnCount] = targetDir.tissue;
+                SPAWN_ENERGY[spawnCount] = Math.min(1, l0.energy[nIdx] * 0.5 + localFood * 0.45);
+                spawnCount++;
                 l0.energy[nIdx] = Math.max(0.08, l0.energy[nIdx] - params.divisionCost * 0.55);
                 break;
               }
@@ -478,14 +496,15 @@ export function stepSimulation(
       }
     }
 
-    for (const s of spawns) {
-      if (!l0.alive[s.idx]) {
-        l0.alive[s.idx] = 1;
-        l0.nodeId[s.idx] = s.nodeId;
-        l0.tissue[s.idx] = s.tissue;
-        l0.age[s.idx] = 0;
-        l0.energy[s.idx] = s.energy;
-        l0.flash[s.idx] = 1.0;
+    for (let i = 0; i < spawnCount; i++) {
+      const idx = SPAWN_IDX[i];
+      if (!l0.alive[idx]) {
+        l0.alive[idx] = 1;
+        l0.nodeId[idx] = SPAWN_NODE_ID[i];
+        l0.tissue[idx] = SPAWN_TISSUE[i];
+        l0.age[idx] = 0;
+        l0.energy[idx] = SPAWN_ENERGY[i];
+        l0.flash[idx] = 1.0;
         l0.activeCount++;
         divisionsThisTick++;
       }
@@ -524,14 +543,8 @@ export function stepSimulation(
     const minEnergy = params.divisionCost * 0.45;
     const dim = layer.dim;
 
-    // Collect lateral gather spawns
-    const lateralSpawns: Array<{
-      idx: number;
-      nodeId: number;
-      tissue: TissueType;
-      energy: number;
-      parentIdx: number;
-    }> = [];
+    // Collect lateral gather spawns into pre-allocated fixed typed arrays (zero per-tick GC)
+    let latCount = 0;
 
     for (let gy = 0; gy < dim; gy++) {
       for (let gx = 0; gx < dim; gx++) {
@@ -560,15 +573,14 @@ export function stepSimulation(
 
           if (allowLateral) {
             const targetNode = genome.nodeById.get(targetId);
-            if (targetNode) {
+            if (targetNode && latCount < MAX_SPAWN_CAP) {
               const blockFood = sampleBlockNutrient(nutrients, gx, gy, layer.stride);
-              lateralSpawns.push({
-                idx,
-                nodeId: targetId,
-                tissue: targetNode.tissue,
-                energy: Math.min(1.0, layer.energy[nIdx] * 0.55 + blockFood * 0.45),
-                parentIdx: nIdx,
-              });
+              SPAWN_IDX[latCount] = idx;
+              SPAWN_NODE_ID[latCount] = targetId;
+              SPAWN_TISSUE[latCount] = targetNode.tissue;
+              SPAWN_ENERGY[latCount] = Math.min(1.0, layer.energy[nIdx] * 0.55 + blockFood * 0.45);
+              SPAWN_PARENT_IDX[latCount] = nIdx;
+              latCount++;
               break;
             }
           }
@@ -576,17 +588,18 @@ export function stepSimulation(
       }
     }
 
-    for (let i = 0; i < lateralSpawns.length; i++) {
-      const s = lateralSpawns[i];
-      if (!layer.alive[s.idx]) {
-        layer.alive[s.idx] = 1;
-        layer.nodeId[s.idx] = s.nodeId;
-        layer.tissue[s.idx] = s.tissue;
-        layer.age[s.idx] = 0;
-        layer.energy[s.idx] = s.energy;
-        layer.flash[s.idx] = 1.0;
+    for (let i = 0; i < latCount; i++) {
+      const idx = SPAWN_IDX[i];
+      if (!layer.alive[idx]) {
+        layer.alive[idx] = 1;
+        layer.nodeId[idx] = SPAWN_NODE_ID[i];
+        layer.tissue[idx] = SPAWN_TISSUE[i];
+        layer.age[idx] = 0;
+        layer.energy[idx] = SPAWN_ENERGY[i];
+        layer.flash[idx] = 1.0;
         layer.activeCount++;
-        layer.energy[s.parentIdx] = Math.max(0.15, layer.energy[s.parentIdx] - params.divisionCost * 0.28);
+        const pIdx = SPAWN_PARENT_IDX[i];
+        layer.energy[pIdx] = Math.max(0.15, layer.energy[pIdx] - params.divisionCost * 0.28);
         divisionsThisTick++;
       }
     }

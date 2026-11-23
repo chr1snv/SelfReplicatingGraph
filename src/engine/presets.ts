@@ -106,6 +106,11 @@ export const ORGANISM_PRESETS: PresetDefinition[] = [
       drawCapsule(g, dim, cx, 60, cx - 7, 92, 1.6, TissueType.VASCULAR);
       drawCapsule(g, dim, cx, 60, cx + 7, 92, 1.6, TissueType.VASCULAR);
 
+      // Central enzymatic gut chamber (Digestive) + paired flame-bulb nephridia (Excretory)
+      drawCapsule(g, dim, cx, 42, cx, 57, 2.8, TissueType.DIGESTIVE);
+      drawDisk(g, dim, cx - 7, 68, 2.2, TissueType.EXCRETORY);
+      drawDisk(g, dim, cx + 7, 68, 2.2, TissueType.EXCRETORY);
+
       // Bilobed cephalic ganglion + ventral nerve cords (Neural)
       drawDisk(g, dim, cx - 5, 28, 3.2, TissueType.NEURAL);
       drawDisk(g, dim, cx + 5, 28, 3.2, TissueType.NEURAL);
@@ -117,6 +122,10 @@ export const ORGANISM_PRESETS: PresetDefinition[] = [
       drawDisk(g, dim, cx - 16, 28, 3.2, TissueType.SENSOR);
       drawDisk(g, dim, cx + 16, 28, 3.2, TissueType.SENSOR);
       drawDisk(g, dim, cx, 19, 2.6, TissueType.SENSOR);
+
+      // Defensive chitin stylet spikes along anterior shoulders
+      drawCapsule(g, dim, cx - 18, 24, cx - 25, 19, 1.2, TissueType.SPIKE);
+      drawCapsule(g, dim, cx + 18, 24, cx + 25, 19, 1.2, TissueType.SPIKE);
 
       // Anterior opposing pectoral braking cilia (Flagella on front shoulders)
       drawDisk(g, dim, cx - 19, 34, 2.4, TissueType.FLAGELLA);
@@ -133,7 +142,7 @@ export const ORGANISM_PRESETS: PresetDefinition[] = [
   {
     id: 'trilobite',
     name: 'Segmented Arthropod',
-    subtitle: 'Anterior antennae sensors, metameric flexor muscles & swimmeret flagella',
+    subtitle: 'Chitin defense spikes, metameric digestive/renal glands, muscles & swimmeret flagella',
     generate: (dim: number) => {
       const g = new Uint8Array(dim * dim);
       const cx = dim / 2;
@@ -164,8 +173,11 @@ export const ORGANISM_PRESETS: PresetDefinition[] = [
         drawCapsule(g, dim, cx + 9, sy, cx + 22, sy, 2.0, TissueType.MUSCLE);
       }
 
-      // Axial dorsal vessel (Vascular) + segmental nerve cord (Neural)
+      // Axial dorsal vessel (Vascular) + midgut chamber (Digestive) + segmental nerve cord (Neural)
       drawCapsule(g, dim, cx, 28, cx, 100, 2.2, TissueType.VASCULAR);
+      drawCapsule(g, dim, cx - 4, 46, cx + 4, 72, 2.5, TissueType.DIGESTIVE);
+      drawDisk(g, dim, cx - 6, 86, 2.3, TissueType.EXCRETORY);
+      drawDisk(g, dim, cx + 6, 86, 2.3, TissueType.EXCRETORY);
       for (let seg = 0; seg < 6; seg++) {
         drawDisk(g, dim, cx, 44 + seg * 10, 2.0, TissueType.NEURAL);
       }
@@ -175,6 +187,14 @@ export const ORGANISM_PRESETS: PresetDefinition[] = [
       drawDisk(g, dim, cx + 15, 28, 3.6, TissueType.SENSOR);
       drawCapsule(g, dim, cx - 10, 20, cx - 18, 13, 2.0, TissueType.SENSOR);
       drawCapsule(g, dim, cx + 10, 20, cx + 18, 13, 2.0, TissueType.SENSOR);
+
+      // Lateral pleural chitin armor spikes & genal spines
+      drawCapsule(g, dim, cx - 35, 48, cx - 41, 56, 1.3, TissueType.SPIKE);
+      drawCapsule(g, dim, cx + 35, 48, cx + 41, 56, 1.3, TissueType.SPIKE);
+      drawCapsule(g, dim, cx - 30, 56, cx - 39, 59, 1.2, TissueType.SPIKE);
+      drawCapsule(g, dim, cx + 30, 56, cx + 39, 59, 1.2, TissueType.SPIKE);
+      drawCapsule(g, dim, cx - 25, 76, cx - 34, 80, 1.2, TissueType.SPIKE);
+      drawCapsule(g, dim, cx + 25, 76, cx + 34, 80, 1.2, TissueType.SPIKE);
 
       // Anterior opposing swimmeret brakes
       drawDisk(g, dim, cx - 35, 36, 2.3, TissueType.FLAGELLA);
@@ -191,7 +211,7 @@ export const ORGANISM_PRESETS: PresetDefinition[] = [
   {
     id: 'hydra',
     name: 'Pulsing Medusa',
-    subtitle: 'Radial bell muscles, tentacle gradient sensors & velum propulsion flagella',
+    subtitle: 'Radial bell muscles, venomous cnidocyte spikes, digestive core & velum flagella',
     generate: (dim: number) => {
       const g = new Uint8Array(dim * dim);
       const cx = dim / 2;
@@ -226,8 +246,11 @@ export const ORGANISM_PRESETS: PresetDefinition[] = [
         drawDisk(g, dim, cx + Math.cos(rad) * 18, cy + Math.sin(rad) * 18, 2.0, TissueType.MUSCLE);
       }
 
-      // Gastrovascular central cavity + canals (Vascular)
-      drawDisk(g, dim, cx, cy, 7.5, TissueType.VASCULAR);
+      // Gastrovascular central cavity + digestive stomach + excretory ring pores
+      drawDisk(g, dim, cx, cy, 8.0, TissueType.VASCULAR);
+      drawDisk(g, dim, cx, cy, 4.2, TissueType.DIGESTIVE);
+      drawDisk(g, dim, cx - 8, cy, 2.0, TissueType.EXCRETORY);
+      drawDisk(g, dim, cx + 8, cy, 2.0, TissueType.EXCRETORY);
       for (let a = 0; a < arms; a++) {
         const baseAngle = (a * 2 * Math.PI) / arms - Math.PI / 2;
         drawCapsule(
@@ -248,9 +271,18 @@ export const ORGANISM_PRESETS: PresetDefinition[] = [
         drawDisk(g, dim, cx + Math.cos(rad) * 12, cy + Math.sin(rad) * 12, 1.3, TissueType.NEURAL);
       }
 
-      // Tentacle-tip rhopalia sensors + flagella tufts
+      // Tentacle-tip rhopalia sensors + flagella tufts + mid-arm stinging spikes
       for (let a = 0; a < arms; a++) {
         const baseAngle = (a * 2 * Math.PI) / arms - Math.PI / 2;
+        const midAng = baseAngle + Math.sin(0.6 * Math.PI * 1.2) * 0.22;
+        drawDisk(
+          g,
+          dim,
+          cx + Math.cos(midAng) * 35,
+          cy + Math.sin(midAng) * 35,
+          1.9,
+          TissueType.SPIKE,
+        );
         const ang = baseAngle + Math.sin(0.95 * Math.PI * 1.2) * 0.22;
         const tx = cx + Math.cos(ang) * 50;
         const ty = cy + Math.sin(ang) * 50;
@@ -267,7 +299,7 @@ export const ORGANISM_PRESETS: PresetDefinition[] = [
   {
     id: 'somite_embryo',
     name: 'Chordate Larva',
-    subtitle: 'Paired myotome muscles, dorsal nerve tube, rostral sensor & tail flagellum',
+    subtitle: 'Myotome muscles, digestive tract, renal nephridia, dorsal spikes & tail flagellum',
     generate: (dim: number) => {
       const g = new Uint8Array(dim * dim);
       const cx = dim / 2;
@@ -291,17 +323,20 @@ export const ORGANISM_PRESETS: PresetDefinition[] = [
         drawDisk(g, dim, cx + offset, sy, 3.4, TissueType.MUSCLE);
       }
 
-      // Notochord & gut (Vascular)
+      // Notochord & vascular gut (Vascular) + digestive pouch & pronephric kidneys (Excretory)
       drawCapsule(g, dim, cx, 36, cx, 88, 2.5, TissueType.VASCULAR);
-      drawDisk(g, dim, cx, 46, 5.0, TissueType.VASCULAR);
+      drawDisk(g, dim, cx, 46, 5.2, TissueType.DIGESTIVE);
+      drawDisk(g, dim, cx - 6, 70, 2.3, TissueType.EXCRETORY);
+      drawDisk(g, dim, cx + 6, 70, 2.3, TissueType.EXCRETORY);
 
       // Neural vesicle + spinal cord (Neural)
       drawDisk(g, dim, cx, 31, 4.8, TissueType.NEURAL);
       drawCapsule(g, dim, cx, 33, cx, 94, 1.6, TissueType.NEURAL);
 
-      // Rostral olfactory / gradient sensors
+      // Rostral olfactory / gradient sensors & rostral lancet spike
       drawDisk(g, dim, cx - 8, 22, 3.0, TissueType.SENSOR);
       drawDisk(g, dim, cx + 8, 22, 3.0, TissueType.SENSOR);
+      drawCapsule(g, dim, cx, 19, cx, 11, 1.5, TissueType.SPIKE);
 
       // Pectoral opposing brake flagella
       drawDisk(g, dim, cx - 24, 38, 2.5, TissueType.FLAGELLA);
@@ -316,7 +351,7 @@ export const ORGANISM_PRESETS: PresetDefinition[] = [
   {
     id: 'vascular_leaf',
     name: 'Motile Phyto-Organism',
-    subtitle: 'Vascular lamina, phototropic leaf-tip sensors, turgor muscles & rootlet flagella',
+    subtitle: 'Vascular lamina, digestive vacuoles, detox glands, marginal thorns & flagella',
     generate: (dim: number) => {
       const g = new Uint8Array(dim * dim);
       const cx = dim / 2;
@@ -346,6 +381,10 @@ export const ORGANISM_PRESETS: PresetDefinition[] = [
         drawCapsule(g, dim, cx, sy, cx + span, ey, 1.3, TissueType.VASCULAR);
       }
 
+      // Central metabolic vacuoles (Digestive & Excretory filtration)
+      drawDisk(g, dim, cx, 44, 4.0, TissueType.DIGESTIVE);
+      drawDisk(g, dim, cx, 78, 3.4, TissueType.EXCRETORY);
+
       // Contracting turgor/pulvinus muscles along margins
       drawCapsule(g, dim, cx - 26, 56, cx - 22, 82, 2.2, TissueType.MUSCLE);
       drawCapsule(g, dim, cx + 26, 56, cx + 22, 82, 2.2, TissueType.MUSCLE);
@@ -355,10 +394,12 @@ export const ORGANISM_PRESETS: PresetDefinition[] = [
       drawDisk(g, dim, cx - 14, 62, 2.2, TissueType.NEURAL);
       drawDisk(g, dim, cx + 14, 62, 2.2, TissueType.NEURAL);
 
-      // Apical gradient sensors
+      // Apical gradient sensors & marginal defensive thorns (Spikes)
       drawDisk(g, dim, cx, 20, 3.2, TissueType.SENSOR);
       drawDisk(g, dim, cx - 14, 32, 2.4, TissueType.SENSOR);
       drawDisk(g, dim, cx + 14, 32, 2.4, TissueType.SENSOR);
+      drawCapsule(g, dim, cx - 34, 64, cx - 42, 60, 1.3, TissueType.SPIKE);
+      drawCapsule(g, dim, cx + 34, 64, cx + 42, 60, 1.3, TissueType.SPIKE);
 
       // Apical opposing braking flagella
       drawDisk(g, dim, cx - 22, 34, 2.4, TissueType.FLAGELLA);

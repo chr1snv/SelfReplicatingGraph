@@ -37,6 +37,12 @@ function toolToTissue(tool: BrushTool): TissueType {
       return TissueType.MUSCLE;
     case 'flagella':
       return TissueType.FLAGELLA;
+    case 'digestive':
+      return TissueType.DIGESTIVE;
+    case 'excretory':
+      return TissueType.EXCRETORY;
+    case 'spike':
+      return TissueType.SPIKE;
     default:
       return TissueType.EMPTY;
   }

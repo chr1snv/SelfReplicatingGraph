@@ -64,7 +64,20 @@ export const OrganismSideTab: React.FC<OrganismSideTabProps> = ({
           <p className="mt-0.5 font-mono text-[11px] tabular-nums text-slate-400">
             Gen {organism.generation}
             {organism.parentIds ? ` (#${organism.parentIds[0]}×#${organism.parentIds[1]})` : ''} ·{' '}
-            IoU {organism.simState.iouPercent.toFixed(1)}% · {organism.mesh.cells.length} cells
+            IoU {organism.simState.iouPercent.toFixed(1)}% · {organism.mesh.cells.length} cells ·{' '}
+            <span
+              className={
+                organism.mood === 'aggressive'
+                  ? 'text-rose-400 font-semibold'
+                  : organism.mood === 'amorous'
+                    ? 'text-rose-300'
+                    : organism.mood === 'threatened'
+                      ? 'text-amber-300'
+                      : 'text-cyan-300'
+              }
+            >
+              Mood: {organism.mood}
+            </span>
             {organism.rupturedCells > 0 ? ` · ${organism.rupturedCells} ruptured` : ''}
           </p>
         </div>
@@ -80,9 +93,9 @@ export const OrganismSideTab: React.FC<OrganismSideTabProps> = ({
       </div>
 
       {/* Live Soft-Body & Chemotaxis Readout Strip */}
-      <div className="grid grid-cols-4 gap-px border-b border-slate-800 bg-slate-800/80 text-center">
-        <div className="bg-[#0B0F17] px-2 py-2">
-          <div className="text-[10px] text-slate-400">ATP Energy</div>
+      <div className="grid grid-cols-5 gap-px border-b border-slate-800 bg-slate-800/80 text-center">
+        <div className="bg-[#0B0F17] px-1.5 py-2">
+          <div className="text-[10px] text-slate-400">ATP</div>
           <div
             className={`font-mono text-xs font-semibold tabular-nums ${
               organism.energyReserve < 25 ? 'text-rose-400' : 'text-emerald-400'
@@ -91,23 +104,52 @@ export const OrganismSideTab: React.FC<OrganismSideTabProps> = ({
             {organism.energyReserve.toFixed(0)}%
           </div>
         </div>
-        <div className="bg-[#0B0F17] px-2 py-2">
+        <div className="bg-[#0B0F17] px-1.5 py-2">
+          <div className="text-[10px] text-slate-400">Waste</div>
+          <div
+            className={`font-mono text-xs font-semibold tabular-nums ${
+              organism.wasteLevel > 60 ? 'text-amber-300' : 'text-teal-300'
+            }`}
+          >
+            {organism.wasteLevel.toFixed(0)}%
+          </div>
+        </div>
+        <div className="bg-[#0B0F17] px-1.5 py-2">
           <div className="text-[10px] text-slate-400">Speed</div>
           <div className="font-mono text-xs font-semibold tabular-nums text-slate-200">
             {organism.speed.toFixed(2)}
           </div>
         </div>
-        <div className="bg-[#0B0F17] px-2 py-2">
-          <div className="text-[10px] text-slate-400">ATP Burn</div>
+        <div className="bg-[#0B0F17] px-1.5 py-2">
+          <div className="text-[10px] text-slate-400">Burn</div>
           <div className="font-mono text-xs font-semibold tabular-nums text-amber-400">
             -{(organism.lastMetabolicDrain * 10).toFixed(2)}
           </div>
         </div>
-        <div className="bg-[#0B0F17] px-2 py-2">
-          <div className="text-[10px] text-slate-400">Gas Area</div>
+        <div className="bg-[#0B0F17] px-1.5 py-2">
+          <div className="text-[10px] text-slate-400">Area</div>
           <div className="font-mono text-xs font-semibold tabular-nums text-cyan-400">
             {areaRatio.toFixed(0)}%
           </div>
+        </div>
+      </div>
+
+      {/* Organ Physiology & Vascular/Neural Connectivity Readout */}
+      <div className="grid grid-cols-5 gap-px border-b border-slate-800 bg-slate-800/60 text-center font-mono text-[10px] tabular-nums">
+        <div className="bg-[#090D14] px-1.5 py-1 text-slate-400">
+          Vasc <span className="text-rose-300">{Math.round(organism.mesh.vascularEfficiency * 100)}%</span>
+        </div>
+        <div className="bg-[#090D14] px-1.5 py-1 text-slate-400">
+          Neur <span className="text-indigo-300">{Math.round(organism.mesh.neuralEfficiency * 100)}%</span>
+        </div>
+        <div className="bg-[#090D14] px-1.5 py-1 text-slate-400">
+          Gut <span className="text-orange-300">{Math.round(organism.mesh.digestiveEfficiency * 100)}%</span>
+        </div>
+        <div className="bg-[#090D14] px-1.5 py-1 text-slate-400">
+          Renal <span className="text-teal-300">{Math.round(organism.mesh.excretoryEfficiency * 100)}%</span>
+        </div>
+        <div className="bg-[#090D14] px-1.5 py-1 text-slate-400">
+          Spikes <span className="text-slate-200">{organism.mesh.spikeCount}</span>
         </div>
       </div>
 
@@ -203,6 +245,11 @@ export const OrganismSideTab: React.FC<OrganismSideTabProps> = ({
                   AR-ResNet Controller (6 Neurons)
                 </span>
                 <span className="font-mono uppercase text-[10px] tracking-wider text-cyan-300">
+                  {organism.neuralNet.isAggressive && (
+                    <span className="mr-1.5 rounded bg-rose-500/20 px-1 py-0.5 text-[9px] font-semibold text-rose-300">
+                      SPIKES ARMED
+                    </span>
+                  )}
                   {organism.neuralNet.mode} · C {Math.round(organism.neuralNet.cruiseOut * 100)}% / B{' '}
                   {Math.round(organism.neuralNet.brakeOut * 100)}%
                 </span>

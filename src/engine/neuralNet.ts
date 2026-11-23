@@ -1,6 +1,7 @@
 import {
   CompiledGenome,
   LocomotionMode,
+  NeuralBlueprintConfig,
   NeuralNetState,
   NeuronState,
   TissueType,
@@ -15,12 +16,21 @@ export const NEURON_COUNT = 6;
 // 3: Commit - turn direction memory (anti-180° flip hesitation)
 // 4: Avoid  - toxin / repellent evasion surge
 // 5: Gait   - muscle CPG undulation envelope
-const NEURON_LABELS = ['Turn', 'Seek', 'Brake', 'Commit', 'Avoid', 'Gait'];
+export const NEURON_LABELS = ['Turn', 'Seek', 'Brake', 'Commit', 'Avoid', 'Gait'];
+
+export const NEURON_DESCRIPTIONS = [
+  'Lateral chemotactic steering torque from gradient sensors',
+  'Forward cruising drive toward food scent or mates (latches against Brake)',
+  'Hysteresis-gated overshoot brake engaging only inside food peaks',
+  'Directional polarity memory preventing 180° turning hesitation',
+  'Toxin, spike-danger, and stronger-rival avoidance surge',
+  'Central pattern generator (CPG) amplitude envelope for muscle springs',
+];
 
 // Default 6x6 recurrent synaptic matrix W[row * 6 + col] (pre-synaptic col j -> post-synaptic row k)
 // Key motif: Seek (1) and Brake (2) form a mutually inhibitory bistable latch so forward
 // and reverse flagella never rapidly alternate against each other.
-const BASE_WEIGHTS: number[] = [
+export const BASE_WEIGHTS: number[] = [
   //   Turn   Seek   Brake  Commit  Avoid   Gait
   /*0*/ 0.18, 0.06, -0.15,  0.42,  0.22,  0.04, // Turn: reinforced by Commit & Avoid
   /*1*/ 0.05, 0.48, -0.95,  0.12,  0.28,  0.10, // Seek: self-exciting AR latch, strongly inhibited by Brake
@@ -29,6 +39,11 @@ const BASE_WEIGHTS: number[] = [
   /*4*/ 0.00, 0.10, -0.20,  0.10,  0.38,  0.05, // Avoid: evasive persistence
   /*5*/ 0.20, 0.45, -0.35,  0.12,  0.32,  0.30, // Gait: couples muscle CPG to active Seek/Turn/Avoid
 ];
+
+const DEFAULT_AR_DECAY = [0.68, 0.80, 0.82, 0.88, 0.70, 0.78];
+const DEFAULT_RES_GAIN = [0.42, 0.32, 0.24, 0.28, 0.46, 0.34];
+const DEFAULT_BIAS = [0.0, 0.22, -0.32, 0.0, -0.08, 0.14];
+const INIT_STATES = [0.0, 0.45, 0.0, 0.0, 0.0, 0.45];
 
 export interface NeuralObservation {
   gradCross: number; // normalized perpendicular scent gradient (-1..1)
@@ -40,15 +55,25 @@ export interface NeuralObservation {
   speed: number; // total COM speed
   energyFactor: number; // energyReserve / 100
   neuralDensity: number; // average NEURAL tissue density across body
+  neuralEfficiency?: number; // topological sensor->neural->effector connectivity factor
   gradientSensitivity: number;
+  hostileProx?: number; // [0..1] proximity/engagement with non-colony rival or combat target
+  spikeDensity?: number; // fraction of living cells equipped with Chitin Spikes
 }
 
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
-export function createNeuralNetState(genome?: CompiledGenome): NeuralNetState {
-  // Derive subtle baseline specialization from the organism's neural & sensor genome ratios
+export function createDefaultNeuralConfig(genome?: CompiledGenome): NeuralBlueprintConfig {
+  if (genome?.neuralConfig) {
+    return {
+      arDecay: [...genome.neuralConfig.arDecay],
+      resGain: [...genome.neuralConfig.resGain],
+      bias: [...genome.neuralConfig.bias],
+      weights: [...genome.neuralConfig.weights],
+    };
+  }
   let neuralBias = 0;
   let flagellaBias = 0;
   if (genome) {
@@ -57,37 +82,85 @@ export function createNeuralNetState(genome?: CompiledGenome): NeuralNetState {
     neuralBias = clamp(l0.tissueCounts[TissueType.NEURAL] / active, 0, 0.3);
     flagellaBias = clamp(l0.tissueCounts[TissueType.FLAGELLA] / active, 0, 0.3);
   }
+  const bias = [...DEFAULT_BIAS];
+  bias[1] += flagellaBias * 0.4;
+  bias[5] += neuralBias * 0.25;
+  return {
+    arDecay: [...DEFAULT_AR_DECAY],
+    resGain: [...DEFAULT_RES_GAIN],
+    bias,
+    weights: [...BASE_WEIGHTS],
+  };
+}
 
-  const specs: Array<{ arDecay: number; resGain: number; bias: number; initState: number }> = [
-    { arDecay: 0.68, resGain: 0.42, bias: 0.0, initState: 0.0 }, // 0 Turn
-    { arDecay: 0.80, resGain: 0.32, bias: 0.22 + flagellaBias * 0.4, initState: 0.45 }, // 1 Seek
-    { arDecay: 0.82, resGain: 0.24, bias: -0.32, initState: 0.0 }, // 2 Brake
-    { arDecay: 0.88, resGain: 0.28, bias: 0.0, initState: 0.0 }, // 3 Commit
-    { arDecay: 0.70, resGain: 0.46, bias: -0.08, initState: 0.0 }, // 4 Avoid
-    { arDecay: 0.78, resGain: 0.34, bias: 0.14 + neuralBias * 0.25, initState: 0.45 }, // 5 Gait
-  ];
+export function createNeuralNetState(
+  genome?: CompiledGenome,
+  configOverride?: NeuralBlueprintConfig,
+): NeuralNetState {
+  const cfg = configOverride ?? createDefaultNeuralConfig(genome);
 
-  const neurons: NeuronState[] = specs.map((sp, id) => ({
-    id,
-    label: NEURON_LABELS[id],
-    state: sp.initState,
-    residual: sp.initState,
-    input: 0,
-    arDecay: sp.arDecay,
-    resGain: sp.resGain,
-    bias: sp.bias,
-  }));
+  const neurons: NeuronState[] = new Array(NEURON_COUNT);
+  for (let id = 0; id < NEURON_COUNT; id++) {
+    const init = INIT_STATES[id];
+    neurons[id] = {
+      id,
+      label: NEURON_LABELS[id],
+      state: init,
+      residual: init,
+      input: 0,
+      arDecay: clamp(cfg.arDecay[id] ?? DEFAULT_AR_DECAY[id], 0.3, 0.96),
+      resGain: clamp(cfg.resGain[id] ?? DEFAULT_RES_GAIN[id], 0.05, 0.8),
+      bias: clamp(cfg.bias[id] ?? DEFAULT_BIAS[id], -0.8, 0.8),
+    };
+  }
 
   return {
     neurons,
-    weights: [...BASE_WEIGHTS],
+    weights: cfg.weights.length === 36 ? [...cfg.weights] : [...BASE_WEIGHTS],
     cruiseOut: 0.65,
     brakeOut: 0.0,
     steerOut: 0.0,
     gaitOut: 0.75,
+    aggressionOut: 0.0,
+    isAggressive: false,
     mode: 'seek',
     atFoodTicks: 0,
   };
+}
+
+export function extractNeuralConfigFromState(net: NeuralNetState): NeuralBlueprintConfig {
+  return {
+    arDecay: net.neurons.map((n) => n.arDecay),
+    resGain: net.neurons.map((n) => n.resGain),
+    bias: net.neurons.map((n) => n.bias),
+    weights: [...net.weights],
+  };
+}
+
+export function crossoverNeuralConfigs(
+  cfgA?: NeuralBlueprintConfig,
+  cfgB?: NeuralBlueprintConfig,
+): NeuralBlueprintConfig | undefined {
+  if (!cfgA && !cfgB) return undefined;
+  const a = cfgA ?? createDefaultNeuralConfig();
+  const b = cfgB ?? createDefaultNeuralConfig();
+  const arDecay = new Array<number>(NEURON_COUNT);
+  const resGain = new Array<number>(NEURON_COUNT);
+  const bias = new Array<number>(NEURON_COUNT);
+  const weights = new Array<number>(36);
+
+  for (let i = 0; i < NEURON_COUNT; i++) {
+    const pickA = Math.random() < 0.5;
+    arDecay[i] = clamp((pickA ? a.arDecay[i] * 0.7 + b.arDecay[i] * 0.3 : b.arDecay[i] * 0.7 + a.arDecay[i] * 0.3) + (Math.random() - 0.5) * 0.03, 0.45, 0.94);
+    resGain[i] = clamp((pickA ? a.resGain[i] * 0.7 + b.resGain[i] * 0.3 : b.resGain[i] * 0.7 + a.resGain[i] * 0.3) + (Math.random() - 0.5) * 0.03, 0.12, 0.7);
+    bias[i] = clamp((pickA ? a.bias[i] * 0.65 + b.bias[i] * 0.35 : b.bias[i] * 0.65 + a.bias[i] * 0.35) + (Math.random() - 0.5) * 0.04, -0.75, 0.75);
+  }
+  for (let i = 0; i < 36; i++) {
+    const wa = a.weights[i] ?? BASE_WEIGHTS[i];
+    const wb = b.weights[i] ?? BASE_WEIGHTS[i];
+    weights[i] = clamp((Math.random() < 0.5 ? wa * 0.7 + wb * 0.3 : wb * 0.7 + wa * 0.3) + (Math.random() - 0.5) * 0.04, -1.5, 1.5);
+  }
+  return { arDecay, resGain, bias, weights };
 }
 
 export function cloneNeuralNetState(src: NeuralNetState): NeuralNetState {
@@ -98,6 +171,8 @@ export function cloneNeuralNetState(src: NeuralNetState): NeuralNetState {
     brakeOut: src.brakeOut,
     steerOut: src.steerOut,
     gaitOut: src.gaitOut,
+    aggressionOut: src.aggressionOut,
+    isAggressive: src.isAggressive,
     mode: src.mode,
     atFoodTicks: src.atFoodTicks,
   };
@@ -116,18 +191,18 @@ export function crossoverNeuralNetStates(
     const other = pickA ? nb : na;
     child.neurons[i].arDecay = clamp(
       base.arDecay * 0.7 + other.arDecay * 0.3 + (Math.random() - 0.5) * 0.04,
-      0.52,
-      0.92,
+      0.45,
+      0.94,
     );
     child.neurons[i].resGain = clamp(
       base.resGain * 0.7 + other.resGain * 0.3 + (Math.random() - 0.5) * 0.04,
-      0.18,
-      0.55,
+      0.12,
+      0.7,
     );
     child.neurons[i].bias = clamp(
       base.bias * 0.65 + other.bias * 0.35 + (Math.random() - 0.5) * 0.05,
-      -0.6,
-      0.6,
+      -0.75,
+      0.75,
     );
   }
   for (let i = 0; i < child.weights.length; i++) {
@@ -136,8 +211,8 @@ export function crossoverNeuralNetStates(
     child.weights[i] = clamp(
       (Math.random() < 0.5 ? wa * 0.7 + wb * 0.3 : wb * 0.7 + wa * 0.3) +
         (Math.random() - 0.5) * 0.04,
-      -1.35,
-      1.35,
+      -1.5,
+      1.5,
     );
   }
   return child;
@@ -147,6 +222,8 @@ export function blendNeuralNetState(host: NeuralNetState, frag: NeuralNetState):
   for (let i = 0; i < NEURON_COUNT; i++) {
     host.neurons[i].state = host.neurons[i].state * 0.65 + frag.neurons[i].state * 0.35;
   }
+  host.aggressionOut = host.aggressionOut * 0.65 + frag.aggressionOut * 0.35;
+  host.isAggressive = host.aggressionOut >= 0.46;
   host.atFoodTicks = Math.max(host.atFoodTicks, frag.atFoodTicks);
 }
 
@@ -248,8 +325,9 @@ export function stepNeuralNet(net: NeuralNetState, obs: NeuralObservation): void
     ? -0.25
     : clamp(0.3 + Math.abs(turnInput) * 0.25 + Math.max(0, seekInput) * 0.5 + toxinUrgency * 0.4, -0.5, 1.3);
 
-  // Living NEURAL cells amplify recurrent synaptic integration across the network
-  const neuralGain = 0.72 + Math.min(0.68, obs.neuralDensity * 2.4);
+  // Living NEURAL cells + sensor->neural->effector connectivity modulate synaptic integration
+  const eff = obs.neuralEfficiency !== undefined ? obs.neuralEfficiency : 0.85;
+  const neuralGain = (0.48 + 0.52 * eff) * (0.72 + Math.min(0.68, obs.neuralDensity * 2.4));
 
   // Update every neuron k with recurrent matrix W, per-neuron residual skip, and AR smoothing
   for (let k = 0; k < NEURON_COUNT; k++) {
@@ -313,4 +391,23 @@ export function stepNeuralNet(net: NeuralNetState, obs: NeuralObservation): void
   net.cruiseOut = cruiseOut;
   net.brakeOut = brakeOut;
   net.mode = mode;
+
+  // AR-smoothed neural aggression output: activates spikes only when pursuing/engaging a target
+  // with sufficient ATP and neural Seek > Avoid/Brake dominance (calm foraging retracts spikes).
+  const hostileDrive = clamp(obs.hostileProx ?? 0, 0, 1);
+  const spikeFactor = obs.spikeDensity !== undefined ? Math.min(1, 0.35 + obs.spikeDensity * 4.0) : 1.0;
+  const engageDrive =
+    obs.energyFactor >= 0.36 && !insideFoodPeak
+      ? clamp(
+          hostileDrive * (0.48 + 0.52 * positiveSeek + 0.18 * turnMag) * spikeFactor -
+            Math.max(0, avoidH) * 0.65 -
+            positiveBrake * 0.32,
+          0,
+          1,
+        )
+      : 0;
+  net.aggressionOut = clamp(net.aggressionOut * 0.72 + engageDrive * 0.28, 0, 1);
+  const threshold = net.isAggressive ? 0.36 : 0.46;
+  net.isAggressive =
+    net.aggressionOut >= threshold && obs.energyFactor >= 0.34 && avoidH < 0.48;
 }
