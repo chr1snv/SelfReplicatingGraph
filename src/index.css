@@ -1,0 +1,90 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: #090c12;
+    overscroll-behavior-y: contain;
+  }
+
+  code, pre, .font-mono {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+}
+
+/* Custom scientific range slider */
+input[type="range"].lab-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  min-height: 24px;
+}
+
+input[type="range"].lab-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: #1e293b;
+}
+
+input[type="range"].lab-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: #06b6d4;
+  border: 2px solid #090c12;
+  margin-top: -5px;
+  transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+input[type="range"].lab-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+input[type="range"].lab-slider::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: #1e293b;
+}
+
+input[type="range"].lab-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: #06b6d4;
+  border: 2px solid #090c12;
+}
+
+/* Touchscreens: larger hit track and thumb for comfortable finger dragging */
+@media (pointer: coarse) {
+  input[type="range"].lab-slider {
+    min-height: 38px;
+  }
+
+  input[type="range"].lab-slider::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 3px;
+  }
+
+  input[type="range"].lab-slider::-webkit-slider-thumb {
+    width: 22px;
+    height: 22px;
+    margin-top: -8px;
+  }
+
+  input[type="range"].lab-slider::-moz-range-track {
+    height: 6px;
+    border-radius: 3px;
+  }
+
+  input[type="range"].lab-slider::-moz-range-thumb {
+    width: 22px;
+    height: 22px;
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "MorphoGraph — Multi-Tissue Mipmap Morphogenesis",
+  "description": "Multi-resolution level-set mipmap simulator for cell specialization, sparse-to-dense morphogenesis, and reverse-compiled directive connectivity graphs.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
